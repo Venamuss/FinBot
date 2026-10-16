@@ -20,6 +20,8 @@ type Handler struct {
 	service *expense.Service
 }
 
+const maxJSONBodyBytes = 1 << 20
+
 func New(service *expense.Service) http.Handler {
 	return &Handler{service: service}
 }
@@ -159,7 +161,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (h *Handler) getByID(w http.ResponseWriter, r *http.Request, id string) {
+func (h *Handler) getByID(w http.ResponseWriter, r *http.Request, rawID string) {
+	id, err := expense.ParseID(rawID)
+	if err != nil {
+		operationError(w, expense.ValidationError{"id": err.Error()})
+		return
+	}
+
 	item, err := h.service.GetByID(r.Context(), id)
 	if err != nil {
 		operationError(w, err)
@@ -186,8 +194,14 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
 	input, fields, err := decodeInput(r.Body)
 	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Тело запроса превышает 1048576 байт", nil)
+			return
+		}
 		writeError(w, http.StatusBadRequest, "invalid_json", "Ожидается один JSON-объект", nil)
 		return
 	}
@@ -205,7 +219,13 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, query url.Values) {
-	page, err := h.service.List(r.Context(), query)
+	filter, err := parseFilter(query)
+	if err != nil {
+		operationError(w, err)
+		return
+	}
+
+	page, err := h.service.List(r.Context(), filter)
 	if err != nil {
 		operationError(w, err)
 		return
@@ -231,7 +251,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, query url.Values)
 func decodeInput(body io.Reader) (expense.Input, expense.ValidationError, error) {
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return expense.Input{}, nil, errors.New("invalid body")
+		return expense.Input{}, nil, err
 	}
 	if !utf8.Valid(data) {
 		return expense.Input{}, nil, errors.New("invalid body")

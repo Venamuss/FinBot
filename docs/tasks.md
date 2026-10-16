@@ -70,6 +70,34 @@ Docker build with `--network host` and Compose HTTP smoke passed. The existing C
 
 Additional check T13 (live local LLM) remains not performed. This refactoring does not complete the MVP.
 
+## Focused Backend Review and Refactoring — 16.10.2026
+
+Addressed the three requested findings within the existing Create/GetByID/List increment. No dependencies, architectural layers, or interfaces were added; existing REST responses and validation messages are preserved except for the documented oversized-body response. T03/T05 remain partial.
+
+- `httpapi/handler.go`: POST JSON bodies are bounded by `http.MaxBytesReader` to 1 MiB (1,048,576 bytes), including whitespace. The original read error reaches the handler so `http.MaxBytesError` returns `413`, code `request_too_large`, and `fields: {}`. Origin, media-type, routing, and query checks retain their precedence. The limit and error are documented in [api.md](api.md).
+- `expense/service.go` and `httpapi/filter.go`: GetByID accepts an `int64`; List accepts an `expense.Filter`. Path ID parsing and query parsing, validation, and defaults now belong to HTTP transport. Query-filter tests moved from `expense/model_test.go` to `httpapi/filter_test.go`; invalid filters and IDs are also checked through the handler to ensure they never reach the repository.
+- `postgres/repository.go`: deferred rollback uses a separate one-second timeout, independent of request cancellation. The original operation error and read-only REPEATABLE READ snapshot are preserved. Cleanup failure is intentionally suppressed; pgx discards the failed connection.
+- Regression tests: `httpapi/handler_test.go` covers bodies below, exactly at, and over the limit, malformed oversized JSON, UTF-8 byte counting, unknown body lengths, the 413 envelope, and absence of repository writes. `postgres/rollback_test.go` uses an in-memory PostgreSQL protocol peer that fails the count query and stops answering rollback; real pgx cleanup returns within the bound, retains the original query error, and releases the pool connection.
+
+| Check | Result |
+|---|---|
+| `gofmt -w internal/httpapi internal/expense internal/postgres` | Completed from `backend/` |
+| `go test ./...`, `go vet ./...` | Passed with `GOCACHE=/tmp/finbot-go-cache`; integration tests skip explicitly when `TEST_DATABASE_URL` is absent |
+| All Go tests with `TEST_DATABASE_URL`, `go test ./... -count=1 -v` | Passed against isolated PostgreSQL 17 in Compose, including repository filters/sorting/pages, database constraints, legacy migration upgrade, concurrent migrations, Down/Up, and the stalled rollback regression |
+| Docker build and Compose HTTP smoke | Passed with a rebuilt image using `docker build --network host`, isolated project `finbot-focused-check` on `127.0.0.1:18082`, and the existing `scripts/smoke.py` |
+| Real HTTP body-limit smoke | Passed for Content-Length and chunked transfer: exact 1 MiB returned 201; one byte over returned the documented JSON 413; rejected requests created no expenses |
+| Frontend and Telegram allowed A/B / denied C | Not run: these components are not implemented and are outside this refactoring. These mandatory MVP checks remain pending |
+
+Test credentials and smoke state stayed outside the repository. The isolated test containers, network, and disposable volume were removed after verification; the running application and pre-existing `compose.yaml` edits were left untouched. PATCH, DELETE, Telegram, LLM, and frontend work were not implemented. Additional check T13 remains not performed; the full MVP is not complete.
+
+## Readability Follow-up for Backend Review — 16.10.2026
+
+Reviewed the recent Go changes against the updated AGENTS.md readability criteria and inspected the actual diff after gofmt. In `httpapi/filter.go`, limit and offset now have separate parsing branches. `httpapi/handler.go` separates transport validation from service calls. In `httpapi/handler_test.go` and `httpapi/filter_test.go`, request setup, expected repository calls, and response assertions are explicit; the 413 envelope check is a focused test helper. In `postgres/rollback_test.go`, the protocol peer follows startup, BEGIN, failed count, and unanswered rollback in order, with a helper limited to receiving and checking query messages. Existing scenarios and observable behavior, including the 1 MiB limit, 413 contract, one-second rollback timeout, and transaction isolation, are preserved. No dependencies or interfaces were added.
+
+Verification passed: gofmt on all five edited Go files, `go test ./...`, `go vet ./...`, `git diff --check`, all Go tests with `TEST_DATABASE_URL` and `-count=1 -v` against isolated PostgreSQL 17, and the existing Compose HTTP smoke against a rebuilt image on `127.0.0.1:18082`. The Docker build used `--network host`. The isolated test containers, network, and disposable volume were removed after verification. Existing AGENTS.md and Compose edits were preserved.
+
+Frontend and Telegram A/B/C checks remain unavailable because those components are not implemented. T03/T05 remain partial; additional check T13 remains not performed.
+
 ## Mandatory MVP
 
 Maintenance check, 16.10.2026: centralized all expense model/service errors in a single `var` block in `model.go`, including `ErrNotFound` and validation messages. Existing messages and REST behavior are preserved. `gofmt`, `go test ./...`, and `go vet ./...` passed; PostgreSQL integration tests were skipped without `TEST_DATABASE_URL`. Compose smoke was not rerun for this declaration-only refactoring.

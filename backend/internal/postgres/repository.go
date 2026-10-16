@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/jackc/pgx/v5"
@@ -14,6 +15,8 @@ import (
 type Repository struct {
 	pool *pgxpool.Pool
 }
+
+const rollbackTimeout = time.Second
 
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool}
@@ -109,9 +112,11 @@ func (r *Repository) List(ctx context.Context, filter expense.Filter) (expense.P
 		return expense.Page{}, err
 	}
 	defer func() {
-		// After commit the transaction is closed; on failure preserve the operation's
-		// original error instead of replacing it with a cleanup error.
-		_ = tx.Rollback(context.Background())
+		// Cleanup must outlive request cancellation but stay bounded if the connection
+		// is unavailable. Preserve the operation's error; pgx discards a failed connection.
+		cleanupCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+		defer cancel()
+		_ = tx.Rollback(cleanupCtx)
 	}()
 
 	page := expense.Page{

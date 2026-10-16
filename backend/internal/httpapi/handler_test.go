@@ -75,10 +75,12 @@ func request(handler http.Handler, method, path, body, mediaType, origin string)
 func TestCreateGetList(t *testing.T) {
 	repository := &fakeRepo{}
 	handler := New(expense.NewService(repository))
+
 	response := request(handler, http.MethodPost, "/api/expenses", validBody, "application/json; charset=utf-8", "")
 	if response.Code != http.StatusCreated {
 		t.Fatalf("create: %d %s", response.Code, response.Body)
 	}
+
 	var object map[string]any
 	if err := json.Unmarshal(response.Body.Bytes(), &object); err != nil {
 		t.Fatal(err)
@@ -86,6 +88,7 @@ func TestCreateGetList(t *testing.T) {
 	if len(object) != 8 {
 		t.Fatalf("want 8 response fields, got %d", len(object))
 	}
+
 	expectedFields := map[string]any{
 		"id":         "42",
 		"user_id":    "9223372036854775807",
@@ -96,15 +99,18 @@ func TestCreateGetList(t *testing.T) {
 		"created_at": "2026-10-16T09:00:00.000000123Z",
 		"updated_at": "2026-10-16T09:00:00.000000123Z",
 	}
+
 	for field, want := range expectedFields {
 		if object[field] != want {
 			t.Errorf("%s: want %v, got %v", field, want, object[field])
 		}
 	}
+
 	get := request(handler, http.MethodGet, "/api/expenses/42", "", "", "")
 	if get.Code != http.StatusOK || get.Body.String() != response.Body.String() {
 		t.Fatalf("get: %d %s", get.Code, get.Body)
 	}
+
 	for _, path := range []string{"/api/expenses", "/api/expenses?offset=100"} {
 		list := request(handler, http.MethodGet, path, "", "", "")
 		var page struct {
@@ -149,6 +155,44 @@ func TestListFilters(t *testing.T) {
 	}
 }
 
+func TestGetByIDTransportValidation(t *testing.T) {
+	invalidIDs := []string{"0", "01", "-1", "+1", "1.0", "9223372036854775808"}
+
+	for _, rawID := range invalidIDs {
+		t.Run(rawID, func(t *testing.T) {
+			repository := &fakeRepo{}
+			handler := New(expense.NewService(repository))
+
+			path := "/api/expenses/" + rawID
+			response := request(handler, http.MethodGet, path, "", "", "")
+
+			if response.Code != http.StatusBadRequest {
+				t.Fatalf("want status 400, got %d", response.Code)
+			}
+
+			var envelope struct {
+				Error struct {
+					Code   string            `json:"code"`
+					Fields map[string]string `json:"fields"`
+				} `json:"error"`
+			}
+
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			if envelope.Error.Code != "validation_error" {
+				t.Fatalf("want validation_error, got %q", envelope.Error.Code)
+			}
+			if envelope.Error.Fields["id"] != expense.ErrInvalidID.Error() {
+				t.Fatalf("unexpected ID validation message: %q", envelope.Error.Fields["id"])
+			}
+			if repository.calls != 0 {
+				t.Fatalf("invalid ID reached repository: %d calls", repository.calls)
+			}
+		})
+	}
+}
+
 func TestComment(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -173,6 +217,112 @@ func TestComment(t *testing.T) {
 				t.Fatalf("want null comment: %t, got %v", tc.isNull, repository.stored.Comment)
 			}
 		})
+	}
+}
+
+func TestCreateBodySizeLimit(t *testing.T) {
+	const limit = 1 << 20
+	exactBody := validBody + strings.Repeat(" ", limit-len(validBody))
+	oversizedComment := strings.Repeat("я", limit/2)
+	commentBody := strings.TrimSuffix(validBody, "}") + `,"comment":"` + oversizedComment + `"}`
+	tests := []struct {
+		name            string
+		body            string
+		status          int
+		repositoryCalls int
+	}{
+		{
+			name:            "below limit",
+			body:            exactBody[:limit-1],
+			status:          http.StatusCreated,
+			repositoryCalls: 1,
+		},
+		{
+			name:            "exact limit",
+			body:            exactBody,
+			status:          http.StatusCreated,
+			repositoryCalls: 1,
+		},
+		{
+			name:   "one byte over",
+			body:   exactBody + " ",
+			status: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name:   "malformed oversized JSON",
+			body:   strings.Repeat("{", limit+1),
+			status: http.StatusRequestEntityTooLarge,
+		},
+		{
+			name:   "oversized UTF-8 comment",
+			body:   commentBody,
+			status: http.StatusRequestEntityTooLarge,
+		},
+	}
+	transfers := []struct {
+		name          string
+		unknownLength bool
+	}{
+		{name: "known length"},
+		{name: "streamed", unknownLength: true},
+	}
+	for _, tc := range tests {
+		for _, transfer := range transfers {
+			t.Run(tc.name+"/"+transfer.name, func(t *testing.T) {
+				repository := &fakeRepo{}
+				handler := New(expense.NewService(repository))
+
+				req := httptest.NewRequest(http.MethodPost, "/api/expenses", strings.NewReader(tc.body))
+				req.Header.Set("Content-Type", "application/json")
+
+				if transfer.unknownLength {
+					req.ContentLength = -1
+					req.TransferEncoding = []string{"chunked"}
+				}
+
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(response, req)
+				if response.Code != tc.status {
+					t.Fatalf("want status %d, got %d", tc.status, response.Code)
+				}
+				if repository.calls != tc.repositoryCalls {
+					t.Fatalf("want %d repository calls, got %d", tc.repositoryCalls, repository.calls)
+				}
+				if tc.status == http.StatusRequestEntityTooLarge {
+					assertRequestTooLargeResponse(t, response)
+				}
+			})
+		}
+	}
+}
+
+func assertRequestTooLargeResponse(t *testing.T, response *httptest.ResponseRecorder) {
+	t.Helper()
+	if response.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("want application/json, got %q", response.Header().Get("Content-Type"))
+	}
+
+	var envelope struct {
+		Error struct {
+			Code    string            `json:"code"`
+			Message string            `json:"message"`
+			Fields  map[string]string `json:"fields"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.Error.Code != "request_too_large" {
+		t.Fatalf("want request_too_large, got %q", envelope.Error.Code)
+	}
+	if envelope.Error.Message == "" {
+		t.Fatal("missing error message")
+	}
+	if envelope.Error.Fields == nil {
+		t.Fatal("missing error fields object")
+	}
+	if len(envelope.Error.Fields) != 0 {
+		t.Fatalf("want empty error fields, got %v", envelope.Error.Fields)
 	}
 }
 
@@ -572,6 +722,7 @@ func TestInternalErrors(t *testing.T) {
 func TestEmptyList(t *testing.T) {
 	handler := New(expense.NewService(&fakeRepo{}))
 	response := request(handler, http.MethodGet, "/api/expenses", "", "", "")
+
 	if response.Code != http.StatusOK {
 		t.Fatalf("status %d: %s", response.Code, response.Body)
 	}
@@ -587,6 +738,7 @@ func TestSameOriginAccepted(t *testing.T) {
 	handler := New(expense.NewService(&fakeRepo{}))
 	response := request(handler, http.MethodPost, "http://example.com/api/expenses",
 		validBody, "application/json", "http://example.com")
+
 	if response.Code != http.StatusCreated {
 		t.Fatalf("same origin: %d %s", response.Code, response.Body)
 	}

@@ -9,6 +9,7 @@ The API requires no authentication. Any client with network access can work with
 - The base path is `/api`; field names use `snake_case`.
 - Responses with a body use `Content-Type: application/json`. JSON is encoded as UTF-8.
 - POST and PATCH accept `Content-Type: application/json`, optionally with `charset=utf-8`; the body is a single JSON object.
+- The implemented POST endpoint accepts at most 1 MiB (1,048,576 bytes), including JSON whitespace. A larger body returns `413` with code `request_too_large` and `fields: {}`, before JSON or field validation and without creating an expense. This applies to streamed bodies without `Content-Length` as well. Routing, query, Origin, and media-type checks retain precedence.
 - Unknown body fields are prohibited. Unknown query parameters are also prohibited.
 - IDs and amounts are transmitted as strings, not JSON numbers. Pagination metadata uses JSON numbers.
 - Every field of the full object is present in the response; an absent comment is represented as `null`.
@@ -184,6 +185,7 @@ All API errors with a body use one format:
 | `403` | `forbidden` | Rejected Origin on a mutating browser request |
 | `404` | `not_found` | The record or API route does not exist |
 | `405` | `method_not_allowed` | The method is not supported; the `Allow` header is also returned |
+| `413` | `request_too_large` | The JSON request body exceeds 1 MiB (1,048,576 bytes); `fields` is `{}` |
 | `415` | `unsupported_media_type` | POST/PATCH was not sent as JSON |
 | `500` | `internal_error` | Internal error without SQL, secrets, or technical details |
 

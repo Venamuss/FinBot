@@ -90,16 +90,19 @@ func TestMigrationConcurrentIntegration(t *testing.T) {
 
 	const concurrentRuns = 2
 	results := make(chan error, concurrentRuns)
+
 	for attempt := 0; attempt < concurrentRuns; attempt++ {
 		go func() {
 			results <- migrations.Apply(ctx, pool)
 		}()
 	}
+
 	for attempt := 0; attempt < concurrentRuns; attempt++ {
 		if err := <-results; err != nil {
 			t.Fatal(err)
 		}
 	}
+
 	if err := pool.Ping(ctx); err != nil {
 		t.Fatalf("Goose closed the application pool: %v", err)
 	}
@@ -109,6 +112,7 @@ func TestMigrationConcurrentIntegration(t *testing.T) {
 		SELECT count(*)
 		FROM goose_db_version
 		WHERE version_id = 1 AND is_applied`
+
 	err := pool.QueryRow(ctx, countAppliedVersions).Scan(&appliedVersions)
 	if err != nil {
 		t.Fatal(err)
