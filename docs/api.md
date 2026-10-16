@@ -1,40 +1,40 @@
-# REST API FinBot
+# FinBot REST API
 
-Контракт API веб-панели. Обязательства ТЗ и проектные решения описаны в [requirements.md](requirements.md), реализация — в [architecture.md](architecture.md). Пагинация, сортировка и форматы ниже — проектные решения.
+The web panel API contract. Assignment obligations and project decisions are described in [requirements.md](requirements.md); implementation is described in [architecture.md](architecture.md). Pagination, sorting, and the formats below are project decisions.
 
-API не требует авторизации. Любой клиент с сетевым доступом может работать со всеми расходами. Telegram allowlist не ограничивает REST и назначение владельца в панели.
+The API requires no authentication. Any client with network access can work with all expenses. The Telegram allowlist does not restrict REST or owner assignment in the panel.
 
-## Общие правила
+## General Rules
 
-- Базовый путь — `/api`; имена полей — `snake_case`.
-- Ответы с телом имеют `Content-Type: application/json`. JSON кодируется UTF-8.
-- POST и PATCH принимают `Content-Type: application/json` с допустимым `charset=utf-8`; тело — один JSON-объект.
-- Неизвестные поля тела запрещены. Неизвестные query-параметры также запрещены.
-- ID и суммы передаются строками, а не JSON-числами. Метаданные пагинации — JSON-числа.
-- Все поля полного объекта присутствуют в ответе; отсутствующий комментарий представлен `null`.
+- The base path is `/api`; field names use `snake_case`.
+- Responses with a body use `Content-Type: application/json`. JSON is encoded as UTF-8.
+- POST and PATCH accept `Content-Type: application/json` with an allowed `charset=utf-8`; the body is a single JSON object.
+- Unknown body fields are prohibited. Unknown query parameters are also prohibited.
+- IDs and amounts are transmitted as strings, not JSON numbers. Pagination metadata uses JSON numbers.
+- Every field of the full object is present in the response; an absent comment is represented as `null`.
 
-## Полный объект расхода
+## Full Expense Object
 
-| Поле | Формат | Nullable в ответе | Обязательно в POST | Допустимо в PATCH |
+| Field | Format | Nullable in response | Required in POST | Allowed in PATCH |
 |---|---|---|---|---|
-| `id` | Строка положительного `int64` | Нет | Нет, запрещено передавать | Нет |
-| `user_id` | Строка положительного `int64` | Нет | Да | Да |
-| `amount` | Десятичная строка | Нет | Да | Да |
-| `category` | Строка из списка категорий | Нет | Да | Да |
-| `spent_at` | Существующая дата `YYYY-MM-DD`, без времени и часового пояса | Нет | Да | Да |
-| `comment` | Строка или `null` | Да | Нет, по умолчанию `null` | Да |
-| `created_at` | RFC 3339 в UTC, суффикс `Z` | Нет | Нет, запрещено передавать | Нет |
-| `updated_at` | RFC 3339 в UTC, суффикс `Z` | Нет | Нет, запрещено передавать | Нет |
+| `id` | Positive `int64` as a string | No | No; must not be supplied | No |
+| `user_id` | Positive `int64` as a string | No | Yes | Yes |
+| `amount` | Decimal string | No | Yes | Yes |
+| `category` | String from the category list | No | Yes | Yes |
+| `spent_at` | Valid calendar date in `YYYY-MM-DD` format, without a time or time zone | No | Yes | Yes |
+| `comment` | String or `null` | Yes | No; defaults to `null` | Yes |
+| `created_at` | RFC 3339 in UTC, with a `Z` suffix | No | No; must not be supplied | No |
+| `updated_at` | RFC 3339 in UTC, with a `Z` suffix | No | No; must not be supplied | No |
 
-ID допускают значения от `"1"` до `"9223372036854775807"`, без знака, пробелов и ведущих нулей. То же правило действует в пути и фильтре `user_id`. Формально корректный, но отсутствующий ID расхода возвращает `404`; неверный формат — `400`.
+IDs range from `"1"` to `"9223372036854775807"`, without a sign, whitespace, or leading zeros. The same rule applies to the path and the `user_id` filter. A well-formed but nonexistent expense ID returns `404`; an invalid format returns `400`.
 
-Сумма строго больше нуля и не превышает `"999999999999.99"`. Допускается целая часть без ведущих нулей, кроме самого нуля, и необязательная дробная часть из одного или двух знаков с точкой. Запрос принимает `"350"`, `"350.5"`, `"350.50"`, `"0.01"`. Ответ всегда содержит два десятичных знака. JSON-числа, знаки, пробелы, запятые, экспоненты и более двух дробных знаков отклоняются без округления.
+An amount is strictly greater than zero and does not exceed `"999999999999.99"`. The integer part has no leading zeros except for zero itself; an optional fractional part contains one or two digits separated by a decimal point. Requests accept `"350"`, `"350.5"`, `"350.50"`, and `"0.01"`. Responses always contain two decimal places. JSON numbers, signs, whitespace, commas, exponents, and more than two fractional digits are rejected without rounding.
 
-Категории: `еда`, `транспорт`, `жильё`, `развлечения`, `здоровье`, `покупки`, `другое`. Регистр и написание должны совпадать.
+Categories: `еда`, `транспорт`, `жильё`, `развлечения`, `здоровье`, `покупки`, `другое`. Case and spelling must match exactly.
 
-Комментарий может быть строкой, в том числе пустой, либо `null`. Пустая строка сохраняется как пустая строка; `null` означает отсутствие комментария. Для остальных полей `null` запрещён.
+A comment may be a string, including an empty string, or `null`. An empty string is stored as an empty string; `null` means no comment. Other fields cannot be `null`.
 
-Пример полного объекта:
+Example of a full object:
 
 ```json
 {
@@ -49,19 +49,19 @@ ID допускают значения от `"1"` до `"9223372036854775807"`, 
 }
 ```
 
-## Получить расход
+## Get an Expense
 
 `GET /api/expenses/{id}`
 
-- `200`: полный объект расхода без дополнительной обёртки.
-- `400`: некорректный ID.
-- `404`: расход не найден.
+- `200`: the full expense object without an additional wrapper.
+- `400`: invalid ID.
+- `404`: expense not found.
 
-## Создать расход
+## Create an Expense
 
 `POST /api/expenses`
 
-Обязательны `user_id`, `amount`, `category`, `spent_at`. `comment` необязателен; при отсутствии сохраняется `null`. Системные поля задаёт сервер.
+`user_id`, `amount`, `category`, and `spent_at` are required. `comment` is optional; if omitted, it is stored as `null`. The server sets system fields.
 
 ```json
 {
@@ -73,13 +73,13 @@ ID допускают значения от `"1"` до `"9223372036854775807"`, 
 }
 ```
 
-Ответ — `201` и полный объект расхода. Telegram ID может отсутствовать в allowlist и справочном списке участников; отдельная регистрация не требуется.
+The response is `201` with the full expense object. The Telegram ID may be absent from the allowlist and the member lookup list; no separate registration is required.
 
-## Изменить расход
+## Update an Expense
 
 `PATCH /api/expenses/{id}`
 
-Принимается хотя бы одно из полей: `user_id`, `amount`, `category`, `spent_at`, `comment`. Пропущенные поля сохраняются. `comment: null` очищает комментарий. Пустой объект, неизвестные и системные поля отклоняются с `400`.
+At least one of the following fields is accepted: `user_id`, `amount`, `category`, `spent_at`, `comment`. Omitted fields remain unchanged. `comment: null` clears the comment. An empty object, unknown fields, and system fields are rejected with `400`.
 
 ```json
 {
@@ -88,34 +88,34 @@ ID допускают значения от `"1"` до `"9223372036854775807"`, 
 }
 ```
 
-Ответ — `200` и полный объект после изменения. Изменение атомарно: при ошибке в любом поле остальные поля не сохраняются. Назначение нового владельца меняет доступность расхода соответствующим пользователям бота, если они разрешены allowlist.
+The response is `200` with the full object after the update. The update is atomic: if any field has an error, no other fields are saved. Assigning a new owner changes the expense's availability to the corresponding bot users, provided they are allowed by the allowlist.
 
-## Удалить расход
+## Delete an Expense
 
 `DELETE /api/expenses/{id}`
 
-Ответ — `204` без тела. Отсутствующая запись возвращает `404`, включая повторное удаление уже удалённого расхода.
+The response is `204` without a body. A missing record returns `404`, including a repeated deletion of an expense that has already been deleted.
 
-## Список расходов
+## List Expenses
 
 `GET /api/expenses`
 
-| Параметр | Формат и ограничения | По умолчанию |
+| Parameter | Format and constraints | Default |
 |---|---|---|
-| `user_id` | Один положительный ID владельца по общим правилам | Все владельцы |
-| `date_from` | Существующая дата `YYYY-MM-DD`, нижняя граница включена | Без нижней границы |
-| `date_to` | Существующая дата `YYYY-MM-DD`, верхняя граница включена | Без верхней границы |
-| `category` | Одно значение из списка категорий | Все категории |
-| `limit` | Целое от 1 до 100 | 50 |
-| `offset` | Целое от 0 до 2147483647 | 0 |
+| `user_id` | One positive owner ID following the general rules | All owners |
+| `date_from` | Valid calendar date in `YYYY-MM-DD` format; inclusive lower bound | No lower bound |
+| `date_to` | Valid calendar date in `YYYY-MM-DD` format; inclusive upper bound | No upper bound |
+| `category` | One value from the category list | All categories |
+| `limit` | Integer from 1 to 100 | 50 |
+| `offset` | Integer from 0 to 2147483647 | 0 |
 | `sort` | `spent_at`, `created_at`, `amount`, `id` | `spent_at` |
-| `order` | `asc` или `desc` | `desc` |
+| `order` | `asc` or `desc` | `desc` |
 
-Фильтры объединяются через AND. `date_from` не может быть позже `date_to`. Неизвестные параметры, повторяющиеся параметры и пустые переданные значения возвращают `400`; пропущенные параметры используют значения по умолчанию.
+Filters are combined with AND. `date_from` cannot be later than `date_to`. Unknown parameters, repeated parameters, and explicitly supplied empty values return `400`; omitted parameters use their defaults.
 
-Числовые поля сортируются по числовому значению. Вторичный ключ — `id` в том же направлении; при сортировке по `id` дополнительный ключ не нужен. Таким образом, порядок по умолчанию — `spent_at DESC, id DESC`. Поле и направление сортировки выбираются из фиксированного списка.
+Numeric fields are sorted numerically. The secondary key is `id` in the same direction; sorting by `id` needs no additional key. The default order is therefore `spent_at DESC, id DESC`. The sort field and direction are selected from fixed lists.
 
-Ответ — `200`:
+The response is `200`:
 
 ```json
 {
@@ -137,17 +137,17 @@ ID допускают значения от `"1"` до `"9223372036854775807"`, 
 }
 ```
 
-`total` — количество после фильтрации до пагинации. `limit` и `offset` — применённые значения. `items` всегда массив полных объектов.
+`total` is the count after filtering and before pagination. `limit` and `offset` are the applied values. `items` is always an array of full objects.
 
-Пустая выборка и выход за последнюю страницу возвращают `200`, `items: []` и актуальный `total`, а не `404`. Формально корректный фильтр по владельцу без расходов даёт пустую выборку.
+An empty result and an offset beyond the last page return `200`, `items: []`, and the current `total`, rather than `404`. A well-formed filter for an owner with no expenses returns an empty result.
 
-Offset-пагинация не создаёт снимок данных: при изменениях между запросами строки могут смещаться.
+Offset pagination does not provide a data snapshot: rows may shift when changes occur between requests.
 
-## Список участников
+## List Members
 
 `GET /api/members`
 
-Возвращает уникальные Telegram ID владельцев существующих расходов по числовому возрастанию. Query-параметров, фильтров и пагинации нет; неизвестный параметр возвращает `400`.
+Returns the unique Telegram IDs of owners of existing expenses, sorted numerically in ascending order. There are no query parameters, filters, or pagination; an unknown parameter returns `400`.
 
 ```json
 {
@@ -157,11 +157,11 @@ Offset-пагинация не создаёт снимок данных: при 
 }
 ```
 
-Ответ — `200`; пустой результат — `{"items":[]}`. После удаления последнего расхода владельца его ID исчезает из списка. Список не является allowlist или отдельным реестром пользователей.
+The response is `200`; an empty result is `{"items":[]}`. After an owner's last expense is deleted, their ID disappears from the list. The list is neither an allowlist nor a separate user registry.
 
-## Ошибки
+## Errors
 
-Все ошибки API с телом используют один формат:
+All API errors with a body use one format:
 
 ```json
 {
@@ -175,16 +175,16 @@ Offset-пагинация не создаёт снимок данных: при 
 }
 ```
 
-`code` и `message` — строки; `fields` — объект с именами полей или параметров и строковыми пояснениями. Все три поля обязательны. Если ошибка не относится к отдельному полю, `fields` равен `{}`. `message` предназначен для человека; клиент различает ошибки по `code`.
+`code` and `message` are strings; `fields` is an object whose keys are field or parameter names and whose values are explanatory strings. All three fields are required. If the error does not relate to an individual field, `fields` is `{}`. `message` is intended for humans; clients distinguish errors by `code`.
 
-| HTTP | `code` | Причина |
+| HTTP | `code` | Cause |
 |---|---|---|
-| `400` | `invalid_json` | Некорректный JSON или тело не является одним JSON-объектом |
-| `400` | `validation_error` | Неверные поля, ID, фильтры, сортировка, пагинация или пустой PATCH |
-| `403` | `forbidden` | Отклонённый Origin изменяющего браузерного запроса |
-| `404` | `not_found` | Запись или маршрут API отсутствует |
-| `405` | `method_not_allowed` | Метод не поддерживается; дополнительно возвращается заголовок `Allow` |
-| `415` | `unsupported_media_type` | POST/PATCH передан не как JSON |
-| `500` | `internal_error` | Внутренняя ошибка без SQL, секретов или технических подробностей |
+| `400` | `invalid_json` | Malformed JSON or a body that is not a single JSON object |
+| `400` | `validation_error` | Invalid fields, IDs, filters, sorting, pagination, or an empty PATCH |
+| `403` | `forbidden` | Rejected Origin on a mutating browser request |
+| `404` | `not_found` | The record or API route does not exist |
+| `405` | `method_not_allowed` | The method is not supported; the `Allow` header is also returned |
+| `415` | `unsupported_media_type` | POST/PATCH was not sent as JSON |
+| `500` | `internal_error` | Internal error without SQL, secrets, or technical details |
 
-Отказ allowlist в Telegram не является REST-ошибкой. API не использует Telegram ID из запроса как доказательство личности: это открытый административный интерфейс панели.
+A Telegram allowlist denial is not a REST error. The API does not treat a Telegram ID in a request as proof of identity: it is the panel's open administrative interface.
