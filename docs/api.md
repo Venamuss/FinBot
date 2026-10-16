@@ -8,7 +8,7 @@ The API requires no authentication. Any client with network access can work with
 
 - The base path is `/api`; field names use `snake_case`.
 - Responses with a body use `Content-Type: application/json`. JSON is encoded as UTF-8.
-- POST and PATCH accept `Content-Type: application/json` with an allowed `charset=utf-8`; the body is a single JSON object.
+- POST and PATCH accept `Content-Type: application/json`, optionally with `charset=utf-8`; the body is a single JSON object.
 - Unknown body fields are prohibited. Unknown query parameters are also prohibited.
 - IDs and amounts are transmitted as strings, not JSON numbers. Pagination metadata uses JSON numbers.
 - Every field of the full object is present in the response; an absent comment is represented as `null`.
@@ -79,7 +79,7 @@ The response is `201` with the full expense object. The Telegram ID may be absen
 
 `PATCH /api/expenses/{id}`
 
-At least one of the following fields is accepted: `user_id`, `amount`, `category`, `spent_at`, `comment`. Omitted fields remain unchanged. `comment: null` clears the comment. An empty object, unknown fields, and system fields are rejected with `400`.
+The request must contain at least one of the following fields: `user_id`, `amount`, `category`, `spent_at`, `comment`. Omitted fields remain unchanged. `comment: null` clears the comment. An empty object, unknown fields, and system fields are rejected with `400`.
 
 ```json
 {

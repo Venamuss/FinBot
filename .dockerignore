@@ -1,0 +1,9 @@
+.git
+.idea
+.agents
+.aws
+.codex
+.env
+frontend
+**/*_test.go
+docs

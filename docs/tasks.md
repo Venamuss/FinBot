@@ -27,8 +27,8 @@ Checks for the current increment:
 | `go vet ./...` | Passed |
 | `TEST_DATABASE_URL=… go test ./internal/postgres -run Integration -count=1 -v` | Passed against a real PostgreSQL 17 instance in Docker; separate random schemas with cleanup limited to their own test data |
 | Domain/service unit tests | Verified int64 ID and amount ranges, `0.10 + 0.20 = 0.30`, rejection of rounding, categories, calendar boundaries, required fields, filters, and validation before the repository |
-| HTTP tests | Passed formats, nullable/empty comment, unknown/system fields, invalid JSON types, errors 400/403/404/405/415/500, `Allow`, Origin, filters, and pagination |
-| PostgreSQL integration tests | Passed Create/GetByID/List, owners A/B, AND filters and inclusive date boundaries, numeric sorting and secondary id, total and empty pages, an SQL-like comment, CHECK/NOT NULL, ranges, and reapplying migrations |
+| HTTP tests | Passed checks for formats, nullable/empty comment, unknown/system fields, invalid JSON types, errors 400/403/404/405/415/500, `Allow`, Origin, filters, and pagination |
+| PostgreSQL integration tests | Passed checks for Create/GetByID/List, owners A/B, AND filters and inclusive date boundaries, numeric sorting and secondary id, total and empty pages, an SQL-like comment, CHECK/NOT NULL, ranges, and reapplying migrations |
 | Docker build without frontend | Passed with `docker build --network host -t finbot-slice-check-app .`; the initial default build network could not connect to the Go proxy (timeout). A clean build using this environment's default Docker network has not been verified |
 | Compose HTTP smoke | Passed in the isolated project `finbot-slice-check`, `127.0.0.1:18080`, using a prebuilt image: real POST/GET, amount normalization, filters, sorting, pagination, and errors |
 | Compose networking and storage | Inspection confirmed loopback HTTP, no published database port, and a persistent volume |
@@ -39,7 +39,44 @@ Two defects found during verification were fixed: sorting by the text representa
 
 Reproducible startup and verification commands are in [README.md](../README.md); the HTTP smoke script is `scripts/smoke.py`. Further operations and stages are not implemented in this increment. The MVP is not ready; T03/T05 are not fully complete. Additional task T13 has not been performed.
 
+## Readability Refactoring — 16.10.2026
+
+Refactored the existing Go implementation without changing business rules, REST responses, SQL semantics, dependencies, or stage completion status. T03/T05 remain partial.
+
+- Repository: separated WHERE construction and allowlisted ORDER BY selection from transaction execution; expanded SQL, row scanning, and query arguments; renamed filter/result variables. Read-only REPEATABLE READ, parameter positions, AND filters, numeric sorting, secondary id, and count/page consistency are preserved.
+- Domain/service and HTTP: clarified names, expanded validation and JSON decoding, reduced nesting, and moved decimal pagination parsing into a focused private function.
+- Startup/configuration and migrations: expanded configuration and SQL, clarified context/channel names, and documented intentional cleanup-error suppression. JSON response write failures are handled explicitly without changing an already-started response or logging expense data. Existing unit test setup now checks parsing errors explicitly.
+- Verification: `gofmt -w cmd internal migrations`, `go test ./...`, and `go vet ./...` passed from `backend/`. Repository integration tests passed against real PostgreSQL 17 with `TEST_DATABASE_URL`; the existing Compose HTTP smoke passed on `127.0.0.1:18080` with a rebuilt image. Docker build used `--network host` due to the previously recorded build-network limitation. Frontend and bot access checks remain unavailable because those components are not implemented.
+-
+
+Refactored `handler.go`, `handler_test.go`, `migration_test.go`, `repository.go`, `repository_test.go`, and `model_test.go`. HTTP dispatch now delegates detail retrieval to a focused handler and uses named status constants and clearer request checks. SQL formatting and argument layout are expanded without changing parameter positions, filters, sorting, or transaction isolation. Tests use descriptive variables, keyed case tables, named subtests, smaller assertions, and separate precision/default/error scenarios. Expected repository calls are explicit test data; the HTTP representation assertion now checks all eight fields. Existing scenarios are retained.
+
+## Goose Migration Runner — 16.10.2026
+
+Replaced the custom migration runner with Goose v3.27.3 Provider using embedded SQL and the existing pgx pool through its database/sql adapter. Goose requires pgx v5.10.0; no second database driver, ORM, CLI service, or application layer was introduced. Automatic Up still runs before HTTP startup; each migration is transactional, concurrent startups use the previous advisory lock key, and Goose logging is disabled to keep SQL and driver details out of application logs.
+
+The initial migration now has Goose Up/Down sections and idempotent CREATE statements. A database created by the original runner retains its expenses, index, IDs, identity sequence, and old `schema_migrations` table. Goose records its own history in `goose_db_version`; compatibility assumes the unchanged original FinBot schema. Down is supported in the SQL file but is never called automatically.
+
+Verification passed: `gofmt`, `go test ./...`, `go vet ./...`, and all Go tests with `TEST_DATABASE_URL` against PostgreSQL 17. Integration coverage includes clean/repeated application, simultaneous migration calls, legacy-schema upgrade with data and sequence preservation, and Down/Up in a random test schema. Existing repository and database-constraint tests pass with the Goose runner.
+
+Docker build with `--network host` and Compose HTTP smoke passed. The existing Compose volume was upgraded from the old history without losing its 16 prior synthetic expenses; old records remained available through HTTP. After a simultaneous app/database restart, HTTP persistence verification passed and Goose version 1 remained registered exactly once. Test containers were stopped and the volume retained. Frontend and Telegram checks remain unavailable; T03/T05 are still partial.
+
+| Check | Result |
+|---|---|
+| `gofmt`, `go test ./...`, `go vet ./...` | Passed. Go checks use `GOCACHE=/tmp/finbot-readability-go-cache` because the default cache is read-only in the sandbox |
+| All Go tests with `TEST_DATABASE_URL` and `-count=1 -v` | Passed against an isolated PostgreSQL 17 Compose database, including repository, database constraints, migration reapplication, legacy upgrade, concurrent migration, and Down/Up scenarios |
+| Docker build and Compose HTTP smoke | Passed with a rebuilt image, `docker build --network host`, and the existing `scripts/smoke.py` against isolated project `finbot-readability-check` on `127.0.0.1:18081`; test credentials and smoke state are outside the repository |
+| Frontend and Telegram allowed A/B / denied C | Not run: these components are not implemented. Repository owner filters do not verify bot authorization; these mandatory MVP checks remain pending |
+
+Additional check T13 (live local LLM) remains not performed. This refactoring does not complete the MVP.
+
 ## Mandatory MVP
+
+Maintenance check, 16.10.2026: centralized all expense model/service errors in a single `var` block in `model.go`, including `ErrNotFound` and validation messages. Existing messages and REST behavior are preserved. `gofmt`, `go test ./...`, and `go vet ./...` passed; PostgreSQL integration tests were skipped without `TEST_DATABASE_URL`. Compose smoke was not rerun for this declaration-only refactoring.
+
+Comment follow-up, 16.10.2026: replaced category literals in `ParseCategory` with seven typed `Category` constants, resolving the `Dehardcode categories` comment. Accepted values and API behavior are unchanged. `gofmt`, `go test ./...`, and `go vet ./...` passed; PostgreSQL integration tests were skipped without `TEST_DATABASE_URL`, and Compose smoke was not rerun for this constants-only change.
+
+Entrypoint readability, 16.10.2026: separated database initialization, HTTP serving, and graceful shutdown in `cmd/finbot/main.go`; `run` now reads as startup orchestration with explicit repository/service wiring. Signal handling, timeout values, startup order, cleanup, and public error messages are preserved. `gofmt`, `go test ./...`, and `go vet ./...` passed (repository integration tests skipped without `TEST_DATABASE_URL`). Docker build with `--network host`, Compose HTTP smoke, simultaneous app/database restart, and HTTP persistence verification passed; operational logs confirmed normal shutdown and restart. Frontend and Telegram checks remain outside the implemented scope.
 
 All tasks T01–T12 are mandatory. Independent branches can proceed in any order once their stated dependencies are ready.
 
