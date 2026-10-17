@@ -16,10 +16,44 @@ import (
 const validBody = `{"user_id":"9223372036854775807","amount":"350.5","category":"еда","spent_at":"2026-10-16"}`
 
 type fakeRepo struct {
-	stored expense.Expense
-	filter expense.Filter
-	err    error
-	calls  int
+	stored  expense.Expense
+	filter  expense.Filter
+	changes expense.Changes
+	id      int64
+	members []int64
+	err     error
+	calls   int
+}
+
+func (r *fakeRepo) Update(_ context.Context, id int64, changes expense.Changes) (expense.Expense, error) {
+	r.calls++
+	r.id = id
+	r.changes = changes
+	if r.err != nil {
+		return expense.Expense{}, r.err
+	}
+	if r.stored.ID != id {
+		return expense.Expense{}, expense.ErrNotFound
+	}
+	return r.stored, nil
+}
+
+func (r *fakeRepo) Delete(_ context.Context, id int64) error {
+	r.calls++
+	r.id = id
+	if r.err != nil {
+		return r.err
+	}
+	if r.stored.ID != id {
+		return expense.ErrNotFound
+	}
+	r.stored = expense.Expense{}
+	return nil
+}
+
+func (r *fakeRepo) ListMembers(context.Context) ([]int64, error) {
+	r.calls++
+	return r.members, r.err
 }
 
 func (r *fakeRepo) Create(_ context.Context, item expense.Expense) (expense.Expense, error) {
@@ -620,17 +654,17 @@ func TestErrors(t *testing.T) {
 			code:   "validation_error",
 		},
 		{
-			name:      "patch",
+			name:      "empty patch",
 			method:    http.MethodPatch,
 			path:      "/api/expenses/1",
 			body:      "{}",
 			mediaType: "application/json",
-			status:    http.StatusMethodNotAllowed,
-			code:      "method_not_allowed",
+			status:    http.StatusBadRequest,
+			code:      "validation_error",
 		},
 		{
-			name:   "delete",
-			method: http.MethodDelete,
+			name:   "put",
+			method: http.MethodPut,
 			path:   "/api/expenses/1",
 			status: http.StatusMethodNotAllowed,
 			code:   "method_not_allowed",
@@ -645,7 +679,7 @@ func TestErrors(t *testing.T) {
 		{
 			name:   "unknown route",
 			method: http.MethodGet,
-			path:   "/api/members",
+			path:   "/api/missing",
 			status: http.StatusNotFound,
 			code:   "not_found",
 		},
@@ -700,6 +734,9 @@ func TestInternalErrors(t *testing.T) {
 		{name: "list", method: http.MethodGet, path: "/api/expenses"},
 		{name: "get", method: http.MethodGet, path: "/api/expenses/1"},
 		{name: "create", method: http.MethodPost, path: "/api/expenses", body: validBody},
+		{name: "update", method: http.MethodPatch, path: "/api/expenses/1", body: `{"amount":"1"}`},
+		{name: "delete", method: http.MethodDelete, path: "/api/expenses/1"},
+		{name: "members", method: http.MethodGet, path: "/api/members"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1,6 +1,6 @@
 # FinBot Implementation Stages
 
-Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements expense creation and retrieval through a Go REST API with PostgreSQL; the full MVP is not yet implemented.
+Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements complete administrative expense CRUD and member lookup through a Go REST API with PostgreSQL; the full MVP is not yet implemented.
 
 R01–R14 identify requirements from the original assignment, P01–P12 identify project decisions, and T01–T13 identify implementation and verification tasks. Contracts are documented; the actual status of the current increment is recorded below. Mark task completion together with the result and checks performed.
 
@@ -97,6 +97,27 @@ Reviewed the recent Go changes against the updated AGENTS.md readability criteri
 Verification passed: gofmt on all five edited Go files, `go test ./...`, `go vet ./...`, `git diff --check`, all Go tests with `TEST_DATABASE_URL` and `-count=1 -v` against isolated PostgreSQL 17, and the existing Compose HTTP smoke against a rebuilt image on `127.0.0.1:18082`. The Docker build used `--network host`. The isolated test containers, network, and disposable volume were removed after verification. Existing AGENTS.md and Compose edits were preserved.
 
 Frontend and Telegram A/B/C checks remain unavailable because those components are not implemented. T03/T05 remain partial; additional check T13 remains not performed.
+
+## Vertical Slice 02 — Complete Expense CRUD — 16.10.2026
+
+Implemented `PATCH /api/expenses/{id}`, `DELETE /api/expenses/{id}`, and `GET /api/members`. T05 is complete for the documented REST API. T03 now includes administrative CRUD and member lookup, but remains partial: totals, the user's most recent expense, and bot ownership/idempotency operations belong to later stages.
+
+- `expense/update.go` and `expense/service.go`: transport-independent partial-update input and validated changes, plus Update/Delete/ListMembers methods. Omitted fields remain unchanged; explicit `comment: null` clears a comment, while an empty string remains an empty string. Validation completes before any repository call.
+- `postgres/repository.go`: one parameterized `UPDATE ... RETURNING` applies all changes and advances `updated_at`, preserving `id` and `created_at`. It updates the current row directly to avoid overwriting concurrent changes to omitted fields. One `DELETE` statement physically removes the record; zero affected rows returns not found. Member lookup selects distinct existing owners in numeric order. REST owner reassignment has no allowlist or registration restriction.
+- `httpapi/handler.go`: the new routes preserve the existing JSON/error formats and keep path/query/body parsing in HTTP. POST and PATCH share Origin, media-type, JSON-type, unknown/system-field, and 1 MiB body checks; [api.md](api.md) now explicitly documents the same limit for PATCH. DELETE checks Origin and returns a bodyless 204. Unsupported methods return the applicable `Allow` header.
+- Tests: added `expense/update_test.go`, `httpapi/crud_test.go`, and `postgres/crud_test.go`; extended existing repository doubles and HTTP error cases. Extended `scripts/smoke.py` for complete CRUD, comment states, failed-update preservation, owner reassignment, and member removal. No dependencies, schema migrations, Telegram, LLM, or frontend implementation were added.
+
+| Check | Verified result |
+|---|---|
+| `gofmt`, final diff/readability review, `git diff --check` | Passed; reviewed every added/modified Go function, transport boundaries, parameterized SQL, and atomic statement behavior |
+| `go test ./...` and `go vet ./...` from `backend/` | Passed with `GOCACHE=/tmp/finbot-go-cache`; the run without `TEST_DATABASE_URL` explicitly skips PostgreSQL integration tests |
+| All Go tests with `TEST_DATABASE_URL`, `go test ./... -count=1` | Passed against isolated PostgreSQL 17. New coverage verifies partial/full updates, exact amounts, timestamps, comment states, owner reassignment and filters, numeric unique members, missing/repeated deletion, concurrent disjoint updates, and exactly one successful concurrent deletion |
+| Atomic failure checks against PostgreSQL | Passed: mixed valid/invalid service input leaves every field unchanged; a database CHECK failure rolls back the complete update; a test-only AFTER DELETE trigger failure restores the deleted row and member lookup |
+| Docker build and Compose HTTP smoke | Passed with `docker build --network host -t finbot-slice02-check:latest .`, isolated Compose project `finbot-slice02-check`, and expanded `scripts/smoke.py` on `127.0.0.1:18083`. Compose's initial build command failed because BuildKit required explicit host-network entitlement; the direct Docker build succeeded |
+| Frontend checks and Telegram allowed A/B / denied C | Not executed: these components are not implemented and are outside this slice. Repository owner filters do not verify bot authorization; mandatory MVP access checks remain pending |
+| Live LLM / optional local check T13 | Not executed; outside this slice |
+
+Test credentials and smoke state were kept outside the repository. The isolated test containers, network, and disposable volume were removed after verification. The existing application deployment was not changed. Work stops at this slice; the full MVP remains incomplete.
 
 ## Mandatory MVP
 

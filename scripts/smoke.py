@@ -2,6 +2,7 @@
 """HTTP smoke test with synthetic data. Run only against a test installation."""
 
 import argparse
+from datetime import datetime
 import json
 from pathlib import Path
 import time
@@ -21,6 +22,9 @@ def call(base, method, path, body=None, headers=None, expected=200):
         response = error
     with response:
         assert response.status == expected, f"{method} {path}: HTTP {response.status}"
+        if expected == 204:
+            assert response.read() == b""
+            return None
         assert response.headers.get_content_type() == "application/json"
         result = json.load(response)
         if expected >= 400:
@@ -52,6 +56,70 @@ def check_persistence(base, state):
     assert [item["id"] for item in page["items"]] == state["ids"]
     for item_id in state["ids"]:
         assert call(base, "GET", "/api/expenses/" + item_id)["id"] == item_id
+
+
+def member_ids(base):
+    response = call(base, "GET", "/api/members")
+    assert set(response) == {"items"}
+    ids = [member["user_id"] for member in response["items"]]
+    assert all(isinstance(user_id, str) for user_id in ids)
+    assert ids == sorted(set(ids), key=int)
+    return ids
+
+
+def check_mutations(base, owner):
+    original_owner = str(int(owner) + 2)
+    new_owner = str(int(owner) + 3)
+    item = call(base, "POST", "/api/expenses", {
+        "user_id": original_owner, "amount": "350.5", "category": "еда",
+        "spent_at": "2026-10-16", "comment": "synthetic",
+    }, expected=201)
+    path = "/api/expenses/" + item["id"]
+    assert original_owner in member_ids(base)
+    changed = call(base, "PATCH", path, {"amount": "450"})
+    assert changed["amount"] == "450.00"
+    assert datetime.fromisoformat(changed["updated_at"]) > datetime.fromisoformat(item["updated_at"])
+    for field in ("id", "user_id", "category", "spent_at", "comment", "created_at"):
+        assert changed[field] == item[field]
+    assert call(base, "GET", path) == changed
+
+    invalid_updates = [
+        {}, {"comment": 1}, {"user_id": None}, {"amount": None},
+        {"category": None}, {"spent_at": None}, {"id": "1"},
+        {"amount": "1.001"}, {"amount": "2", "spent_at": "2026-02-29"},
+        {"amount": "2", "unknown": True}, {"created_at": item["created_at"]},
+    ]
+    for patch in invalid_updates:
+        error = call(base, "PATCH", path, patch, expected=400)
+        assert error["error"]["code"] == "validation_error"
+        assert call(base, "GET", path) == changed
+
+    for comment in (None, "", "synthetic '); DROP TABLE expenses; --"):
+        changed = call(base, "PATCH", path, {"comment": comment})
+        assert changed["comment"] == comment
+        assert changed["amount"] == "450.00"
+        assert call(base, "GET", path) == changed
+    changed = call(base, "PATCH", path, {
+        "user_id": new_owner, "category": "транспорт", "spent_at": "2024-02-29",
+    })
+    assert changed["user_id"] == new_owner
+    assert changed["category"] == "транспорт" and changed["spent_at"] == "2024-02-29"
+    assert changed["created_at"] == item["created_at"]
+    owners = member_ids(base)
+    assert original_owner not in owners and new_owner in owners
+    assert call(base, "GET", "/api/expenses?user_id=" + original_owner)["total"] == 0
+    assert call(base, "GET", "/api/expenses?user_id=" + new_owner)["items"] == [changed]
+    call(base, "PATCH", path, {"amount": "1"}, {"Origin": "https://forbidden.example"}, expected=403)
+    call(base, "DELETE", path, headers={"Origin": "https://forbidden.example"}, expected=403)
+    call(base, "PATCH", path, {"amount": "1"}, {"Content-Type": "text/plain"}, expected=415)
+    assert call(base, "GET", path) == changed
+    call(base, "DELETE", path, expected=204)
+    call(base, "DELETE", path, expected=404)
+    call(base, "GET", path, expected=404)
+    call(base, "PATCH", path, {"comment": None}, expected=404)
+    assert new_owner not in member_ids(base)
+    call(base, "GET", "/api/members?limit=1", expected=400)
+    call(base, "POST", "/api/members", {}, expected=405)
 
 
 def smoke(base):
@@ -97,9 +165,10 @@ def smoke(base):
     call(base, "GET", "/api/expenses/01", expected=400)
     call(base, "GET", "/api/expenses/9223372036854775807", expected=404)
     call(base, "GET", "/api/missing", expected=404)
-    call(base, "DELETE", "/api/expenses/" + records[0]["id"], expected=405)
+    call(base, "PUT", "/api/expenses/" + records[0]["id"], expected=405)
     call(base, "POST", "/api/expenses", valid, {"Content-Type": "text/plain"}, expected=415)
     call(base, "POST", "/api/expenses", valid, {"Origin": "https://forbidden.example"}, expected=403)
+    check_mutations(base, owner)
     state = {"owner": owner, "ids": [item["id"] for item in records[:3]]}
     check_persistence(base, state)
     return state
@@ -121,7 +190,7 @@ def main():
         state = smoke(args.url)
         if args.state_file:
             args.state_file.write_text(json.dumps(state))
-        print("HTTP smoke passed: create, get, filters, sorting, pagination and errors.")
+        print("HTTP smoke passed: CRUD, partial updates, reassignment, members, filters, sorting, pagination and errors.")
 
 
 if __name__ == "__main__":

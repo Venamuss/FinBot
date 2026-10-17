@@ -20,11 +20,14 @@ type Page struct {
 	Offset int
 }
 
-// Repository is the persistence boundary for the current three operations.
+// Repository is the persistence boundary for administrative expense operations.
 type Repository interface {
 	Create(context.Context, Expense) (Expense, error)
 	GetByID(context.Context, int64) (Expense, error)
 	List(context.Context, Filter) (Page, error)
+	Update(context.Context, int64, Changes) (Expense, error)
+	Delete(context.Context, int64) error
+	ListMembers(context.Context) ([]int64, error)
 }
 
 type Service struct {
@@ -49,4 +52,20 @@ func (s *Service) GetByID(ctx context.Context, id int64) (Expense, error) {
 
 func (s *Service) List(ctx context.Context, filter Filter) (Page, error) {
 	return s.repo.List(ctx, filter)
+}
+
+func (s *Service) Update(ctx context.Context, id int64, input UpdateInput) (Expense, error) {
+	changes, err := input.Validate()
+	if err != nil {
+		return Expense{}, err
+	}
+	return s.repo.Update(ctx, id, changes)
+}
+
+func (s *Service) Delete(ctx context.Context, id int64) error {
+	return s.repo.Delete(ctx, id)
+}
+
+func (s *Service) ListMembers(ctx context.Context) ([]int64, error) {
+	return s.repo.ListMembers(ctx)
 }

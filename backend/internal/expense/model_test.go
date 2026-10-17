@@ -145,7 +145,28 @@ func TestInputRequiresMandatoryFields(t *testing.T) {
 }
 
 type countingRepo struct {
-	calls int
+	calls   int
+	id      int64
+	changes Changes
+	err     error
+}
+
+func (r *countingRepo) Update(_ context.Context, id int64, changes Changes) (Expense, error) {
+	r.calls++
+	r.id = id
+	r.changes = changes
+	return Expense{ID: id}, r.err
+}
+
+func (r *countingRepo) Delete(_ context.Context, id int64) error {
+	r.calls++
+	r.id = id
+	return r.err
+}
+
+func (r *countingRepo) ListMembers(context.Context) ([]int64, error) {
+	r.calls++
+	return []int64{2, 10}, r.err
 }
 
 func (r *countingRepo) Create(context.Context, Expense) (Expense, error) {

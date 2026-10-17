@@ -92,6 +92,70 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (expense.Expense, er
 	return scanExpense(row)
 }
 
+func (r *Repository) Update(ctx context.Context, id int64, changes expense.Changes) (expense.Expense, error) {
+	// Apply changes to the current row in one statement, preserving omitted fields
+	// even when another request updates the same expense concurrently.
+	const query = `
+		UPDATE expenses
+		SET user_id = COALESCE($2::bigint, user_id),
+		    amount = COALESCE($3::numeric, amount),
+		    category = COALESCE($4::text, category),
+		    spent_at = COALESCE($5::date, spent_at),
+		    comment = CASE WHEN $6::boolean THEN $7::text ELSE comment END,
+		    updated_at = clock_timestamp()
+		WHERE id = $1
+		RETURNING ` + expenseColumns
+
+	var amount *string
+	if changes.Amount != nil {
+		value := changes.Amount.String()
+		amount = &value
+	}
+	row := r.pool.QueryRow(ctx, query,
+		id,
+		changes.UserID,
+		amount,
+		changes.Category,
+		changes.SpentAt,
+		changes.CommentSet,
+		changes.Comment,
+	)
+	return scanExpense(row)
+}
+
+func (r *Repository) Delete(ctx context.Context, id int64) error {
+	result, err := r.pool.Exec(ctx, `DELETE FROM expenses WHERE id = $1`, id)
+	if err != nil {
+		return err
+	}
+	if result.RowsAffected() == 0 {
+		return expense.ErrNotFound
+	}
+	return nil
+}
+
+func (r *Repository) ListMembers(ctx context.Context) ([]int64, error) {
+	const query = `SELECT DISTINCT user_id FROM expenses ORDER BY user_id ASC`
+	rows, err := r.pool.Query(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	members := []int64{}
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, err
+		}
+		members = append(members, userID)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return members, nil
+}
+
 func (r *Repository) List(ctx context.Context, filter expense.Filter) (expense.Page, error) {
 	orderBy, err := expenseOrderBy(filter)
 	if err != nil {

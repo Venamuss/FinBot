@@ -117,9 +117,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	r = r.WithContext(ctx)
 	isCollection := r.URL.Path == "/api/expenses"
+	isMembers := r.URL.Path == "/api/members"
 	id := strings.TrimPrefix(r.URL.Path, "/api/expenses/")
 	isDetail := strings.HasPrefix(r.URL.Path, "/api/expenses/") && id != "" && !strings.Contains(id, "/")
-	if !isCollection && !isDetail {
+	if !isCollection && !isDetail && !isMembers {
 		writeError(w, http.StatusNotFound, "not_found", "Маршрут не найден", nil)
 		return
 	}
@@ -129,6 +130,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if isCollection {
 		allowedMethods = "GET, POST"
 		methodAllowed = methodAllowed || r.Method == http.MethodPost
+	}
+	if isDetail {
+		allowedMethods = "GET, PATCH, DELETE"
+		methodAllowed = methodAllowed || r.Method == http.MethodPatch || r.Method == http.MethodDelete
 	}
 	if !methodAllowed {
 		w.Header().Set("Allow", allowedMethods)
@@ -154,6 +159,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case r.Method == http.MethodPost:
 		h.create(w, r)
+	case r.Method == http.MethodPatch:
+		h.update(w, r, id)
+	case r.Method == http.MethodDelete:
+		h.delete(w, r, id)
+	case isMembers:
+		h.listMembers(w, r)
 	case isDetail:
 		h.getByID(w, r, id)
 	default:
@@ -176,21 +187,21 @@ func (h *Handler) getByID(w http.ResponseWriter, r *http.Request, rawID string) 
 	writeJSON(w, http.StatusOK, representExpense(item))
 }
 
-func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+func readInput(w http.ResponseWriter, r *http.Request) (decodedInput, bool) {
 	if !sameOrigin(r) {
 		writeError(w, http.StatusForbidden, "forbidden", "Origin запрещён", nil)
-		return
+		return decodedInput{}, false
 	}
 
 	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 	if err != nil || mediaType != "application/json" {
 		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Ожидается application/json в UTF-8", nil)
-		return
+		return decodedInput{}, false
 	}
 	for key, value := range parameters {
 		if key != "charset" || !strings.EqualFold(value, "utf-8") {
 			writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Ожидается application/json в UTF-8", nil)
-			return
+			return decodedInput{}, false
 		}
 	}
 
@@ -200,22 +211,86 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		var maxBytesError *http.MaxBytesError
 		if errors.As(err, &maxBytesError) {
 			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Тело запроса превышает 1048576 байт", nil)
-			return
+			return decodedInput{}, false
 		}
 		writeError(w, http.StatusBadRequest, "invalid_json", "Ожидается один JSON-объект", nil)
-		return
+		return decodedInput{}, false
 	}
 	if len(fields) != 0 {
 		operationError(w, fields)
+		return decodedInput{}, false
+	}
+
+	return input, true
+}
+
+func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
+	input, ok := readInput(w, r)
+	if !ok {
 		return
 	}
 
-	created, err := h.service.Create(r.Context(), input)
+	created, err := h.service.Create(r.Context(), input.Input)
 	if err != nil {
 		operationError(w, err)
 		return
 	}
 	writeJSON(w, http.StatusCreated, representExpense(created))
+}
+
+func (h *Handler) update(w http.ResponseWriter, r *http.Request, rawID string) {
+	id, err := expense.ParseID(rawID)
+	if err != nil {
+		operationError(w, expense.ValidationError{"id": err.Error()})
+		return
+	}
+	input, ok := readInput(w, r)
+	if !ok {
+		return
+	}
+
+	updated, err := h.service.Update(r.Context(), id, input.updateInput())
+	if err != nil {
+		operationError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, representExpense(updated))
+}
+
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rawID string) {
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "forbidden", "Origin запрещён", nil)
+		return
+	}
+	id, err := expense.ParseID(rawID)
+	if err != nil {
+		operationError(w, expense.ValidationError{"id": err.Error()})
+		return
+	}
+	if err := h.service.Delete(r.Context(), id); err != nil {
+		operationError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
+	members, err := h.service.ListMembers(r.Context())
+	if err != nil {
+		operationError(w, err)
+		return
+	}
+	type memberJSON struct {
+		UserID string `json:"user_id"`
+	}
+	items := make([]memberJSON, 0, len(members))
+	for _, userID := range members {
+		items = append(items, memberJSON{UserID: strconv.FormatInt(userID, 10)})
+	}
+	response := struct {
+		Items []memberJSON `json:"items"`
+	}{Items: items}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, query url.Values) {
@@ -248,23 +323,46 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, query url.Values)
 	writeJSON(w, http.StatusOK, response)
 }
 
-func decodeInput(body io.Reader) (expense.Input, expense.ValidationError, error) {
+type decodedInput struct {
+	expense.Input
+	present map[string]json.RawMessage
+}
+
+func (input decodedInput) updateInput() expense.UpdateInput {
+	update := expense.UpdateInput{Comment: input.Comment}
+	if _, ok := input.present["user_id"]; ok {
+		update.UserID = &input.UserID
+	}
+	if _, ok := input.present["amount"]; ok {
+		update.Amount = &input.Amount
+	}
+	if _, ok := input.present["category"]; ok {
+		update.Category = &input.Category
+	}
+	if _, ok := input.present["spent_at"]; ok {
+		update.SpentAt = &input.SpentAt
+	}
+	_, update.CommentSet = input.present["comment"]
+	return update
+}
+
+func decodeInput(body io.Reader) (decodedInput, expense.ValidationError, error) {
 	data, err := io.ReadAll(body)
 	if err != nil {
-		return expense.Input{}, nil, err
+		return decodedInput{}, nil, err
 	}
 	if !utf8.Valid(data) {
-		return expense.Input{}, nil, errors.New("invalid body")
+		return decodedInput{}, nil, errors.New("invalid body")
 	}
 
 	var rawFields map[string]json.RawMessage
 	err = json.Unmarshal(data, &rawFields)
 	if err != nil || rawFields == nil {
-		return expense.Input{}, nil, errors.New("invalid object")
+		return decodedInput{}, nil, errors.New("invalid object")
 	}
 
 	fields := expense.ValidationError{}
-	input := expense.Input{}
+	input := decodedInput{present: rawFields}
 	for key, value := range rawFields {
 		var destination *string
 		switch key {

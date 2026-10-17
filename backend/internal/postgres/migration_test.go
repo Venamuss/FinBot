@@ -40,7 +40,7 @@ func TestMigrationUpgradeIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	for attempt := 0; attempt < 2; attempt++ {
+	for range 2 {
 		if err := migrations.Apply(ctx, pool); err != nil {
 			t.Fatal(err)
 		}
@@ -91,13 +91,13 @@ func TestMigrationConcurrentIntegration(t *testing.T) {
 	const concurrentRuns = 2
 	results := make(chan error, concurrentRuns)
 
-	for attempt := 0; attempt < concurrentRuns; attempt++ {
+	for range concurrentRuns {
 		go func() {
 			results <- migrations.Apply(ctx, pool)
 		}()
 	}
 
-	for attempt := 0; attempt < concurrentRuns; attempt++ {
+	for range concurrentRuns {
 		if err := <-results; err != nil {
 			t.Fatal(err)
 		}
