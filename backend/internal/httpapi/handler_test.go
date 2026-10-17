@@ -780,3 +780,56 @@ func TestSameOriginAccepted(t *testing.T) {
 		t.Fatalf("same origin: %d %s", response.Code, response.Body)
 	}
 }
+
+func TestMuxRoutingErrors(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		status int
+		allow  string
+	}{
+		{name: "collection method", method: http.MethodPut, path: "/api/expenses", status: http.StatusMethodNotAllowed, allow: "GET, POST"},
+		{name: "detail method", method: http.MethodPost, path: "/api/expenses/42", status: http.StatusMethodNotAllowed, allow: "GET, PATCH, DELETE"},
+		{name: "members method", method: http.MethodDelete, path: "/api/members", status: http.StatusMethodNotAllowed, allow: "GET"},
+		{name: "collection HEAD", method: http.MethodHead, path: "/api/expenses", status: http.StatusMethodNotAllowed, allow: "GET, POST"},
+		{name: "detail HEAD", method: http.MethodHead, path: "/api/expenses/42", status: http.StatusMethodNotAllowed, allow: "GET, PATCH, DELETE"},
+		{name: "members HEAD", method: http.MethodHead, path: "/api/members", status: http.StatusMethodNotAllowed, allow: "GET"},
+		{name: "collection trailing slash", method: http.MethodGet, path: "/api/expenses/", status: http.StatusNotFound},
+		{name: "detail trailing slash", method: http.MethodGet, path: "/api/expenses/42/", status: http.StatusNotFound},
+		{name: "members trailing slash", method: http.MethodGet, path: "/api/members/", status: http.StatusNotFound},
+		{name: "unknown method and route", method: http.MethodPost, path: "/api/missing", status: http.StatusNotFound},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			repository := &fakeRepo{}
+			handler := New(expense.NewService(repository))
+			// Routing errors must take precedence over malformed query strings.
+			response := request(handler, tc.method, tc.path+"?bad=%zz", "", "", "")
+			if response.Code != tc.status {
+				t.Fatalf("want status %d, got %d: %s", tc.status, response.Code, response.Body)
+			}
+			if got := response.Header().Get("Allow"); got != tc.allow {
+				t.Fatalf("want Allow %q, got %q", tc.allow, got)
+			}
+			var envelope struct {
+				Error struct {
+					Code string `json:"code"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(response.Body.Bytes(), &envelope); err != nil {
+				t.Fatal(err)
+			}
+			wantCode := "not_found"
+			if tc.status == http.StatusMethodNotAllowed {
+				wantCode = "method_not_allowed"
+			}
+			if envelope.Error.Code != wantCode {
+				t.Fatalf("want code %q, got %q", wantCode, envelope.Error.Code)
+			}
+			if repository.calls != 0 {
+				t.Fatalf("routing error reached repository: %d calls", repository.calls)
+			}
+		})
+	}
+}

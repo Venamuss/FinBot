@@ -18,12 +18,32 @@ import (
 
 type Handler struct {
 	service *expense.Service
+	mux     *http.ServeMux
 }
 
 const maxJSONBodyBytes = 1 << 20
 
 func New(service *expense.Service) http.Handler {
-	return &Handler{service: service}
+	handler := &Handler{service: service, mux: http.NewServeMux()}
+	handler.mux.HandleFunc("GET /api/expenses", validateQuery(handler.list, true))
+	handler.mux.HandleFunc("POST /api/expenses", validateQuery(handler.create, false))
+	handler.mux.HandleFunc("GET /api/expenses/{id}", validateQuery(handler.getByID, false))
+	handler.mux.HandleFunc("PATCH /api/expenses/{id}", validateQuery(handler.update, false))
+	handler.mux.HandleFunc("DELETE /api/expenses/{id}", validateQuery(handler.delete, false))
+	handler.mux.HandleFunc("GET /api/members", validateQuery(handler.listMembers, false))
+
+	// Explicit HEAD patterns override ServeMux's implicit GET-to-HEAD matching.
+	collectionMethods := methodNotAllowed("GET, POST")
+	detailMethods := methodNotAllowed("GET, PATCH, DELETE")
+	memberMethods := methodNotAllowed("GET")
+	handler.mux.HandleFunc("HEAD /api/expenses", collectionMethods)
+	handler.mux.HandleFunc("HEAD /api/expenses/{id}", detailMethods)
+	handler.mux.HandleFunc("HEAD /api/members", memberMethods)
+	handler.mux.HandleFunc("/api/expenses", collectionMethods)
+	handler.mux.HandleFunc("/api/expenses/{id}", detailMethods)
+	handler.mux.HandleFunc("/api/members", memberMethods)
+	handler.mux.HandleFunc("/", routeNotFound)
+	return handler
 }
 
 type expenseJSON struct {
@@ -115,65 +135,41 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	defer cancel()
 
-	r = r.WithContext(ctx)
-	isCollection := r.URL.Path == "/api/expenses"
-	isMembers := r.URL.Path == "/api/members"
-	id := strings.TrimPrefix(r.URL.Path, "/api/expenses/")
-	isDetail := strings.HasPrefix(r.URL.Path, "/api/expenses/") && id != "" && !strings.Contains(id, "/")
-	if !isCollection && !isDetail && !isMembers {
-		writeError(w, http.StatusNotFound, "not_found", "Маршрут не найден", nil)
-		return
-	}
+	h.mux.ServeHTTP(w, r.WithContext(ctx))
+}
 
-	allowedMethods := "GET"
-	methodAllowed := r.Method == http.MethodGet
-	if isCollection {
-		allowedMethods = "GET, POST"
-		methodAllowed = methodAllowed || r.Method == http.MethodPost
-	}
-	if isDetail {
-		allowedMethods = "GET, PATCH, DELETE"
-		methodAllowed = methodAllowed || r.Method == http.MethodPatch || r.Method == http.MethodDelete
-	}
-	if !methodAllowed {
+func routeNotFound(w http.ResponseWriter, r *http.Request) {
+	writeError(w, http.StatusNotFound, "not_found", "Маршрут не найден", nil)
+}
+
+func methodNotAllowed(allowedMethods string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Allow", allowedMethods)
 		writeError(w, http.StatusMethodNotAllowed, "method_not_allowed", "Метод не поддерживается", nil)
-		return
-	}
-
-	query, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		operationError(w, expense.ValidationError{"query": "Некорректная строка запроса"})
-		return
-	}
-	allowsQuery := isCollection && r.Method == http.MethodGet
-	if len(query) != 0 && !allowsQuery {
-		fields := expense.ValidationError{}
-		for key := range query {
-			fields[key] = "Неизвестный параметр"
-		}
-		operationError(w, fields)
-		return
-	}
-
-	switch {
-	case r.Method == http.MethodPost:
-		h.create(w, r)
-	case r.Method == http.MethodPatch:
-		h.update(w, r, id)
-	case r.Method == http.MethodDelete:
-		h.delete(w, r, id)
-	case isMembers:
-		h.listMembers(w, r)
-	case isDetail:
-		h.getByID(w, r, id)
-	default:
-		h.list(w, r, query)
 	}
 }
 
-func (h *Handler) getByID(w http.ResponseWriter, r *http.Request, rawID string) {
-	id, err := expense.ParseID(rawID)
+func validateQuery(next http.HandlerFunc, allowsQuery bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		query, err := url.ParseQuery(r.URL.RawQuery)
+		if err != nil {
+			operationError(w, expense.ValidationError{"query": "Некорректная строка запроса"})
+			return
+		}
+		if len(query) != 0 && !allowsQuery {
+			fields := expense.ValidationError{}
+			for key := range query {
+				fields[key] = "Неизвестный параметр"
+			}
+			operationError(w, fields)
+			return
+		}
+		next(w, r)
+	}
+}
+
+func (h *Handler) getByID(w http.ResponseWriter, r *http.Request) {
+	id, err := expense.ParseID(r.PathValue("id"))
 	if err != nil {
 		operationError(w, expense.ValidationError{"id": err.Error()})
 		return
@@ -238,8 +234,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, representExpense(created))
 }
 
-func (h *Handler) update(w http.ResponseWriter, r *http.Request, rawID string) {
-	id, err := expense.ParseID(rawID)
+func (h *Handler) update(w http.ResponseWriter, r *http.Request) {
+	id, err := expense.ParseID(r.PathValue("id"))
 	if err != nil {
 		operationError(w, expense.ValidationError{"id": err.Error()})
 		return
@@ -257,12 +253,12 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rawID string) {
 	writeJSON(w, http.StatusOK, representExpense(updated))
 }
 
-func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rawID string) {
+func (h *Handler) delete(w http.ResponseWriter, r *http.Request) {
 	if !sameOrigin(r) {
 		writeError(w, http.StatusForbidden, "forbidden", "Origin запрещён", nil)
 		return
 	}
-	id, err := expense.ParseID(rawID)
+	id, err := expense.ParseID(r.PathValue("id"))
 	if err != nil {
 		operationError(w, expense.ValidationError{"id": err.Error()})
 		return
@@ -293,8 +289,8 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, response)
 }
 
-func (h *Handler) list(w http.ResponseWriter, r *http.Request, query url.Values) {
-	filter, err := parseFilter(query)
+func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
+	filter, err := parseFilter(r.URL.Query())
 	if err != nil {
 		operationError(w, err)
 		return
