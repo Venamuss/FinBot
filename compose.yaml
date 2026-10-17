@@ -15,12 +15,20 @@ services:
       HTTP_PROXY: "${HTTP_PROXY:-}"
       HTTPS_PROXY: "${HTTPS_PROXY:-}"
       NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1,db}"
-    ports:
-      - "${HTTP_BIND_IP:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
     depends_on:
       db:
         condition: service_healthy
     stop_grace_period: 15s
+
+  frontend:
+    image: finbot-frontend:latest
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    ports:
+      - "${HTTP_BIND_IP:-127.0.0.1}:${HTTP_PORT:-8080}:80"
+    depends_on:
+      - app
 
   db:
     image: postgres:17-alpine

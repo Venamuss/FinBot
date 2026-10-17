@@ -5,13 +5,13 @@ The foundation is a modular Go monolith, PostgreSQL, REST, React/TypeScript, and
 ## Components
 
 ```text
-Браузер ── React + REST ──► Go-приложение ──► PostgreSQL
-                                  │
-Telegram ◄── long polling ────────┤
-                                  └──────► Настроенный LLM API
+Браузер ──► nginx (React, /api proxy) ──► Go-приложение ──► PostgreSQL
+                                             │
+Telegram ◄── long polling ────────────────────┤
+                                             └──────► Настроенный LLM API
 ```
 
-Two Compose services are mandatory: the application and PostgreSQL. Go serves the built React application, REST API, and Telegram bot loop. The frontend is built in a separate Docker build stage; no additional web server is required.
+Slice 04 uses three Compose services: `frontend` (nginx serving the Vite production build and proxying `/api`), `app` (the Go REST API and Telegram loop), and PostgreSQL. This replaces the earlier project choice to serve React directly from Go: a small reverse proxy keeps the backend unchanged and provides same-origin access without CORS. Node is used only in a frontend Docker build stage; the runtime contains static files and nginx. Only nginx publishes a port, bound to localhost by default. Go and PostgreSQL remain private to the Compose network. Existing optional HTTP_PROXY, HTTPS_PROXY, and NO_PROXY settings remain on the Go service.
 
 Long polling receives messages without a public inbound address. See [Telegram Bot API: getUpdates](https://core.telegram.org/bots/api#getupdates).
 
@@ -43,7 +43,11 @@ Exact request and response bodies, nullable fields, errors, filters, pagination,
 
 Project choice: the panel edits the owner, amount, category, date, and comment. The creation form allows manual entry of a new member's Telegram ID. `/api/members` returns owners of existing expenses; it provides suggestions for the form and filter, rather than an access registry or the allowlist contents.
 
-The panel provides a list, combinable filters, sorting, pagination, and CRUD forms. React and the API share the same origin. Comments are rendered as text.
+The panel uses React/TypeScript, Vite, native fetch, and plain CSS. Local component state is sufficient; no router, component library, or global state dependency is needed. A small typed client follows the documented API envelopes, with string IDs/amounts and structured field errors. Filtering, sorting, and offset pagination run on the server. Requests superseded by filter changes are canceled/ignored. A changed query resets pagination; deletion of a page's last record moves to the preceding valid page.
+
+Editing loads the current expense through GET, then sends only changed fields through PATCH. Unchanged null/empty comments are preserved; clearing text sends null. Amount validation/formatting uses string operations, IDs use exact BigInt range validation, and calendar dates are not converted between time zones for display. The create form defaults to today in the browser's local calendar. Native modal dialogs provide keyboard focus containment and confirmation; failed writes retain entered values.
+
+React and the API share the same origin. nginx preserves the original Host including port for Go's Origin validation; it delegates the JSON body limit and API errors to Go. The Vite development proxy also preserves Host. Comments are rendered as React text. Fonts are self-hosted; frontend builds contain no environment secrets. Vitest/Testing Library/jsdom tests mock fetch, while real API/browser checks use a disposable Compose installation.
 
 The panel and REST API require no authentication and are available to all clients on the trusted local network. The bot allowlist does not restrict REST or owner selection in the panel.
 
@@ -126,7 +130,7 @@ Ownership and record freshness based on `updated_at` are checked atomically with
 
 ## Startup and Operations
 
-- Publish only the application's HTTP port on the trusted local network. PostgreSQL stays within Compose and uses a named volume.
+- Publish only the frontend reverse proxy's HTTP port on the trusted local network. PostgreSQL stays within Compose and uses a named volume.
 - Apply migrations before starting the handlers.
 - In addition to the LLM and allowlist, configure the database connection, Telegram token, time zone, and HTTP port.
 - Store secrets in `.env`; `.env.example` contains templates only.

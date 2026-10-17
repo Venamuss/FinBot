@@ -34,7 +34,7 @@ Identifiers R01–R14 refer only to the assignment. The criteria explain how to 
 | P03 | A single OpenAI-compatible adapter. Verifying one configured endpoint is sufficient for the MVP; local LLM verification is an optional additional check | Current request |
 | P04 | Conversation focus takes precedence; without it, use the user's most recently created record. A mismatch with the stated previous amount requires clarification | Current request |
 | P05 | Exact JSON contracts, errors, filters, pagination, and sorting are documented in [api.md](api.md); IDs and amounts are transmitted as strings | Current request and project defaults |
-| P06 | Go serves React, REST, and the bot; Compose starts the application and PostgreSQL. The panel is intended for a trusted local network | Project choice |
+| P06 | nginx serves built React and proxies REST to Go; Go runs REST and the bot. Compose starts frontend, application, and PostgreSQL. The panel is intended for a trusted local network (deployment choice revised in Slice 04) | Project choice |
 | P07 | Amounts are positive, have two decimal places of precision, and do not use `float`. Currency is not stored, displayed, or converted | Project choice |
 | P08 | The default time zone is `Europe/Moscow` and is configurable. Relative dates are calculated from the Telegram message timestamp; filter boundaries are inclusive | Project choice |
 | P09 | Context is stored in memory separately for each user and expires after 30 minutes of inactivity; ambiguous actions require clarification in text | Project choice |

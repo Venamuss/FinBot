@@ -4,6 +4,9 @@
 .aws
 .codex
 .env
-frontend
+frontend/node_modules
+frontend/dist
+frontend/coverage
+.playwright-mcp
 **/*_test.go
 docs
