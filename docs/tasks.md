@@ -1,6 +1,6 @@
 # FinBot Implementation Stages
 
-Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements complete administrative expense CRUD and member lookup through a Go REST API with PostgreSQL, plus the owner-scoped expense operations and calendar periods of Slice 03A; the full MVP is not yet implemented.
+Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements complete administrative expense CRUD and member lookup through a Go REST API with PostgreSQL, the owner-scoped expense operations and calendar periods of Slice 03A, and the configurable LLM adapter of Slice 03B; the full MVP is not yet implemented.
 
 R01–R14 identify requirements from the original assignment, P01–P12 identify project decisions, and T01–T13 identify implementation and verification tasks. Contracts are documented; the actual status of the current increment is recorded below. Mark task completion together with the result and checks performed.
 
@@ -148,6 +148,43 @@ Replaced manual HTTP dispatch in `httpapi/handler.go` with Go 1.22-style `http.S
 Verification: `gofmt`, `go test ./...`, `go vet ./...`, final diff review, and `git diff --check` passed. PostgreSQL integration tests skipped without `TEST_DATABASE_URL`. A rebuilt image (`docker build --network host`) passed the existing HTTP smoke script against disposable Compose project `finbot-mux-check` on port 18085; its containers, network, and test volume were removed afterward. Existing unrelated working-tree changes were preserved.
 
 Mandatory MVP checks for the frontend and Telegram allowed A/B / denied C were not run because those components are not implemented. Optional live local LLM verification remains unperformed. Stage completion status is unchanged.
+
+## Vertical Slice 03B — Configurable LLM Adapter — 17.10.2026
+
+Implemented a standalone `internal/llm` client using only the Go standard library. Environment configuration and Compose support `LLM_BASE_URL`, `LLM_MODEL`, optional `LLM_API_KEY`, and a positive Go-duration `LLM_TIMEOUT`. Initial defaults select OpenRouter and `google/gemma-4-31b-it:free` with a 30-second timeout; provider/model selection is outside the adapter. No startup probe or application request invokes the client yet.
+
+`New(Config)` validates settings; `Complete(context.Context, Request)` sends non-streaming Chat Completions with system/user messages, JSON Schema function definitions, and optional string/named-function tool choice. Responses expose nullable content, tool calls with `json.RawMessage` argument objects, and the finish reason. The caller can require exactly one tool call. Parsing rejects malformed JSON/envelopes, missing tool fields, invalid argument JSON, duplicate IDs, and inconsistent/incomplete tool completions. Unknown operation names and business fields are deliberately returned for later caller validation, never dispatched here.
+
+Successful response bodies are bounded to 1 MiB, including chunked/decompressed data. HTTP failures return only a status and fixed category; transport errors are sanitized. Cancellation and timeouts cover both headers and body reads. Empty keys omit Authorization entirely. Redirects are rejected, with no retries, alternate endpoint, or model fallback. No dependencies, SQL, migrations, expense logic, REST handlers, or Telegram transport changed.
+
+| Task | Current status after Slice 03B |
+|---|---|
+| T01 | **Incomplete**: REST contract checked in previous slices; live tool calling against the selected model remains unverified. No `LLM_API_KEY` is available in the environment or `.env`; no live request was made and no credentials were requested |
+| T07 | **Implementation and automated acceptance criteria passed**: arguments, configuration/model selection, optional key, timeouts, malformed responses, and no fallback checked. Full stage sign-off remains pending its documented T01 live-verification dependency |
+| T04 | LLM configuration added; Telegram/allowlist configuration and frontend build remain outstanding |
+| T06, T08–T12 | No new completion claims; Telegram integration, conversational CRUD, full access checks, frontend, and end-to-end acceptance remain outside Slice 03B |
+| T13 (additional) | Live local LLM check not executed; remains optional and separate from mandatory T01 |
+
+| Check | Actual result |
+|---|---|
+| `gofmt` | Completed on new/modified Go files |
+| `go test ./...` | Passed with `GOCACHE=/tmp/finbot-go-cache`; initial sandbox attempt could not open a loopback listener, then passed with local networking enabled. PostgreSQL integration tests skipped without `TEST_DATABASE_URL` |
+| `go vet ./...` | Passed |
+| Adapter/configuration tests | Passed using `httptest.Server`: exact payload/path/model/schema and tool choices; key present/absent; valid text/tools and multiple-call policy; malformed/missing structures and arguments; 400/404 provider rejection, 401/403, 429, 5xx; connection failure and short body; cancellation/deadlines before headers and during body; exact/over-limit bodies with known/chunked lengths; sanitized errors and redirects/no retry |
+| Final diff/readability review and `git diff --check` | Passed; new files also checked with `git diff --no-index --check` |
+| Docker build and Compose smoke | Passed with `docker build --network host -t finbot-slice03b-check:latest .`, isolated Compose project `finbot-slice03b-check`, and `scripts/smoke.py` on `127.0.0.1:18086`. CRUD, partial updates, reassignment, members, filters, sorting, pagination, and errors passed with an unreachable configured LLM endpoint and empty key |
+| Frontend checks and Telegram allowed A/B / denied C | Not executable: those components are not implemented. These remain mandatory MVP checks; adapter tests do not establish bot authorization |
+| Live OpenRouter/tool-calling check | Not executed: key unavailable. Selected model availability and provider compatibility remain unverified |
+
+Readability and architectural review covered every new/modified Go function and the final diff after formatting: explicit multiline control flow, safe errors, no added interfaces or business/transport coupling. Ownership and transaction code are unchanged. Temporary smoke credentials/state remained outside the repository. The isolated test containers, network, and disposable volume were removed after verification. Work stops after Slice 03B; Slice 03C and the full MVP are not implemented.
+
+## LLM Client Readability Refactoring — 17.10.2026
+
+Refactored only `internal/llm/client.go`: renamed the transport field to `httpClient`, made constructor setup explicit, extracted HTTP request construction from `Complete`, separated request/response body variables, and expanded tool-definition and named-choice validation. Public types, payloads, validation results, error categories, response limits, cancellation, timeouts, redirects, and no-fallback behavior are preserved. No dependencies, business logic, SQL, or other adapter files changed; existing behavioral tests cover the refactoring.
+
+Verification: `gofmt`, `go test ./...`, `go vet ./...`, final diff/readability and architectural review, and `git diff --check` passed. Go checks used `GOCACHE=/tmp/finbot-go-cache`; tests ran with local networking enabled for `httptest.Server`. PostgreSQL integration tests skipped without `TEST_DATABASE_URL`. Docker build with `--network host` and the existing HTTP smoke passed against isolated Compose project `finbot-llm-readability-check` on `127.0.0.1:18087`, with an unreachable LLM endpoint and empty key. The disposable containers, network, volume, and temporary credentials/state were removed after verification.
+
+Frontend and Telegram A/B/C checks remain unavailable because those components are not implemented. Live provider checks were not rerun for this behavior-preserving refactoring. T01/T07 status and the Slice 03B boundary are unchanged.
 
 ## Mandatory MVP
 
