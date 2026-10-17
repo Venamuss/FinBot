@@ -145,7 +145,7 @@ func TestMigrationDownUpIntegration(t *testing.T) {
 	}
 
 	// Down only touches this test's random schema, never the application's tables.
-	for range 2 {
+	for range 3 {
 		if _, err := provider.Down(ctx); err != nil {
 			t.Fatal(err)
 		}

@@ -29,8 +29,12 @@ func assertMembers(t *testing.T, ctx context.Context, repository *Repository, wa
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("want members %v, got %v", want, got)
+	ids := make([]int64, 0, len(got))
+	for _, member := range got {
+		ids = append(ids, member.UserID)
+	}
+	if !reflect.DeepEqual(ids, want) {
+		t.Fatalf("want members %v, got %v", want, ids)
 	}
 }
 

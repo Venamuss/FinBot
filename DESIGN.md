@@ -37,6 +37,10 @@ Neutral surfaces dominate; green marks the masthead, journal edge, and primary a
 
 Native labelled inputs and selects, 44px minimum control height, a visible 3px focus outline. Primary buttons are filled; secondary outlined; table actions text. Hover/active/disabled/loading/error states are explicit. Native modal dialogs supply focus containment and Escape; closing restores focus, and dismissal is blocked during writes. Deletion initially focuses Cancel. Empty, loading, and failed requests have separate states with retry. Inline field errors are linked to controls; errors and success use text as well as color. Comments wrap and render only as React text. No imagery, icon library, dark theme, or animation is needed.
 
+Member management uses a native collapsible «Участники семьи» section above filters, following the same borders, spacing, and controls. Names are primary text with Telegram IDs in a secondary line; filter options combine both and retain the ID as their value. Existing IDs are static text in the name editor. Long names wrap and member rows can wrap on narrow screens. New and edited names share the existing native dialog/focus behavior.
+
 ## Audit and changelog
+
+- 2026-10-17: added optional member-name metadata management, ID fallback, secondary labels, and responsive member rows; retained the existing journal tokens and type system.
 
 - 2026-10-17: introduced the journal direction and token system for Slice 04. Source and rendered audit: one primary creation action, restrained color, right-aligned amounts, no metrics, decorative cards, gradients, shadows, or motion. Desktop 1440px and mobile 390px layouts inspected. Fixed mobile overflow from absolutely positioned accessible table labels; initial Cancel focus now explicitly follows showModal. Native modal excludes background controls, Escape returns focus, and invalid fields retain values. Text contrast and control boundary checks are recorded in `docs/tasks.md`; table separators intentionally use a lighter border token than interactive fields. Browser resource failures occur only during deliberate network-error simulation.

@@ -21,6 +21,7 @@ type fakeRepo struct {
 	changes expense.Changes
 	id      int64
 	members []int64
+	member  expense.Member
 	err     error
 	calls   int
 }
@@ -51,9 +52,23 @@ func (r *fakeRepo) Delete(_ context.Context, id int64) error {
 	return nil
 }
 
-func (r *fakeRepo) ListMembers(context.Context) ([]int64, error) {
+func (r *fakeRepo) ListMembers(context.Context) ([]expense.Member, error) {
 	r.calls++
-	return r.members, r.err
+	members := make([]expense.Member, 0, len(r.members))
+	for _, userID := range r.members {
+		member := expense.Member{UserID: userID}
+		if r.member.UserID == userID {
+			member = r.member
+		}
+		members = append(members, member)
+	}
+	return members, r.err
+}
+
+func (r *fakeRepo) SetMemberName(_ context.Context, member expense.Member) (expense.Member, error) {
+	r.calls++
+	r.member = member
+	return member, r.err
 }
 
 func (r *fakeRepo) Create(_ context.Context, item expense.Expense) (expense.Expense, error) {

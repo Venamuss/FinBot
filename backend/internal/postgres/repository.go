@@ -144,26 +144,49 @@ func (r *Repository) Delete(ctx context.Context, id int64) error {
 	return nil
 }
 
-func (r *Repository) ListMembers(ctx context.Context) ([]int64, error) {
-	const query = `SELECT DISTINCT user_id FROM expenses ORDER BY user_id ASC`
+func (r *Repository) ListMembers(ctx context.Context) ([]expense.Member, error) {
+	// UNION keeps newly discovered bot owners visible without creating metadata rows.
+	const query = `
+		SELECT owners.user_id, names.display_name
+		FROM (
+			SELECT user_id FROM expenses
+			UNION
+			SELECT user_id FROM member_names
+		) AS owners
+		LEFT JOIN member_names AS names ON names.user_id = owners.user_id
+		ORDER BY owners.user_id ASC`
 	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 
-	members := []int64{}
+	members := []expense.Member{}
 	for rows.Next() {
-		var userID int64
-		if err := rows.Scan(&userID); err != nil {
+		var member expense.Member
+		if err := rows.Scan(&member.UserID, &member.DisplayName); err != nil {
 			return nil, err
 		}
-		members = append(members, userID)
+		members = append(members, member)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	return members, nil
+}
+
+func (r *Repository) SetMemberName(ctx context.Context, member expense.Member) (expense.Member, error) {
+	const query = `
+		INSERT INTO member_names (user_id, display_name)
+		VALUES ($1, $2)
+		ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name
+		RETURNING user_id, display_name`
+	var result expense.Member
+	err := r.db.QueryRow(ctx, query, member.UserID, member.DisplayName).Scan(&result.UserID, &result.DisplayName)
+	if err != nil {
+		return expense.Member{}, err
+	}
+	return result, nil
 }
 
 func (r *Repository) List(ctx context.Context, filter expense.Filter) (expense.Page, error) {

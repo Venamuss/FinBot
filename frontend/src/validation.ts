@@ -20,10 +20,7 @@ export function validDate(value: string): boolean {
 
 export function validateForm(values: FormValues): Record<string, string> {
   const errors: Record<string, string> = {};
-  if (
-    !/^[1-9]\d{0,18}$/.test(values.user_id) ||
-    BigInt(values.user_id) > 9223372036854775807n
-  ) {
+  if (!validID(values.user_id)) {
     errors.user_id =
       "Укажите Telegram ID от 1 до 9223372036854775807 без ведущих нулей.";
   }
@@ -41,6 +38,10 @@ export function validateForm(values: FormValues): Record<string, string> {
   if (values.comment.includes("\0"))
     errors.comment = "Нулевой символ не поддерживается.";
   return errors;
+}
+
+export function validID(value: string): boolean {
+  return /^[1-9]\d{0,18}$/.test(value) && BigInt(value) <= 9223372036854775807n;
 }
 
 export function normalizeAmount(value: string): string {

@@ -27,7 +27,8 @@ type Repository interface {
 	List(context.Context, Filter) (Page, error)
 	Update(context.Context, int64, Changes) (Expense, error)
 	Delete(context.Context, int64) error
-	ListMembers(context.Context) ([]int64, error)
+	ListMembers(context.Context) ([]Member, error)
+	SetMemberName(context.Context, Member) (Member, error)
 }
 
 type Service struct {
@@ -66,6 +67,6 @@ func (s *Service) Delete(ctx context.Context, id int64) error {
 	return s.repo.Delete(ctx, id)
 }
 
-func (s *Service) ListMembers(ctx context.Context) ([]int64, error) {
+func (s *Service) ListMembers(ctx context.Context) ([]Member, error) {
 	return s.repo.ListMembers(ctx)
 }

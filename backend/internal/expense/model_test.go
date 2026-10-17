@@ -148,6 +148,7 @@ type countingRepo struct {
 	calls   int
 	id      int64
 	changes Changes
+	member  Member
 	err     error
 }
 
@@ -164,9 +165,9 @@ func (r *countingRepo) Delete(_ context.Context, id int64) error {
 	return r.err
 }
 
-func (r *countingRepo) ListMembers(context.Context) ([]int64, error) {
+func (r *countingRepo) ListMembers(context.Context) ([]Member, error) {
 	r.calls++
-	return []int64{2, 10}, r.err
+	return []Member{{UserID: 2}, {UserID: 10}}, r.err
 }
 
 func (r *countingRepo) Create(context.Context, Expense) (Expense, error) {
@@ -194,4 +195,10 @@ func TestServiceRejectsInvalidInputBeforeRepository(t *testing.T) {
 	if repository.calls != 0 {
 		t.Fatal("invalid arguments reached repository")
 	}
+}
+
+func (r *countingRepo) SetMemberName(_ context.Context, member Member) (Member, error) {
+	r.calls++
+	r.member = member
+	return member, r.err
 }

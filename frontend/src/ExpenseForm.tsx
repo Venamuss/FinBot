@@ -108,7 +108,11 @@ export default function ExpenseForm({
             />
             <datalist id="member-suggestions">
               {members.map((member) => (
-                <option key={member.user_id} value={member.user_id} />
+                <option
+                  key={member.user_id}
+                  value={member.user_id}
+                  label={member.display_name || member.user_id}
+                />
               ))}
             </datalist>
             <span className="hint">

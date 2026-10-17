@@ -22,6 +22,7 @@ var (
 	ErrInvalidCategory       = errors.New("Неизвестная категория")
 	ErrValidation            = errors.New("Некорректные данные")
 	ErrInvalidComment        = errors.New("Нулевой символ не поддерживается")
+	ErrInvalidDisplayName    = errors.New("Имя должно содержать не более 100 символов без управляющих символов")
 	ErrInvalidQueryValue     = errors.New("Нужно одно непустое значение")
 	ErrInvalidPagination     = errors.New("Некорректная пагинация")
 	ErrInvalidSort           = errors.New("Неизвестное поле сортировки")

@@ -128,7 +128,7 @@ func TestServiceCRUDDelegation(t *testing.T) {
 			t.Fatal("delete ID changed")
 		}
 		members, err := service.ListMembers(ctx)
-		if !errors.Is(err, repositoryError) || !reflect.DeepEqual(members, []int64{2, 10}) {
+		if !errors.Is(err, repositoryError) || !reflect.DeepEqual(members, []Member{{UserID: 2}, {UserID: 10}}) {
 			t.Fatalf("members: %v, %v", members, err)
 		}
 		if repository.calls != 3 {

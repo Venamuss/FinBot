@@ -303,7 +303,7 @@ func TestMembers(t *testing.T) {
 		response := request(New(expense.NewService(repository)), http.MethodGet, "/api/members", "", "", "")
 		want := `{"items":[]}`
 		if len(members) != 0 {
-			want = `{"items":[{"user_id":"2"},{"user_id":"10"},{"user_id":"9223372036854775807"}]}`
+			want = `{"items":[{"user_id":"2","display_name":null},{"user_id":"10","display_name":null},{"user_id":"9223372036854775807","display_name":null}]}`
 		}
 		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != want || repository.calls != 1 {
 			t.Fatalf("unexpected members response: %d %s", response.Code, response.Body)

@@ -11,6 +11,7 @@ import type {
 } from "./api";
 import DeleteExpense from "./DeleteExpense";
 import ExpenseEditor from "./ExpenseEditor";
+import FamilyMembers from "./FamilyMembers";
 import { displayAmount, displayDate, validDate } from "./validation";
 
 const initialQuery: ExpenseQuery = {
@@ -31,6 +32,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [members, setMembers] = useState<Member[]>([]);
   const [memberError, setMemberError] = useState("");
+  const [membersLoading, setMembersLoading] = useState(true);
   const [memberAttempt, setMemberAttempt] = useState(0);
   const [revision, setRevision] = useState(0);
   const [editor, setEditor] = useState<{ id: string | null }>();
@@ -47,6 +49,7 @@ export default function App() {
   useEffect(() => {
     const controller = new AbortController();
     setMemberError("");
+    setMembersLoading(true);
     api
       .members(controller.signal)
       .then((result) => {
@@ -54,6 +57,9 @@ export default function App() {
       })
       .catch((error) => {
         if (!controller.signal.aborted) setMemberError(errorMessage(error));
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setMembersLoading(false);
       });
     return () => controller.abort();
   }, [revision, memberAttempt]);
@@ -100,6 +106,9 @@ export default function App() {
     setRevision((value) => value + 1);
   }
 
+  const memberNames = new Map(
+    members.map((member) => [member.user_id, member.display_name]),
+  );
   const activeFilters = Boolean(
     query.user_id || query.category || query.date_from || query.date_to,
   );
@@ -137,6 +146,23 @@ export default function App() {
             {notice}
           </p>
         )}
+        <FamilyMembers
+          members={members}
+          loading={membersLoading}
+          failed={Boolean(memberError)}
+          onReload={() => setMemberAttempt((value) => value + 1)}
+          onSaved={(member) => {
+            setMembers((current) =>
+              current.some((item) => item.user_id === member.user_id)
+                ? current.map((item) =>
+                    item.user_id === member.user_id ? member : item,
+                  )
+                : [...current, member],
+            );
+            setMemberAttempt((value) => value + 1);
+            setNotice("Имя участника сохранено.");
+          }}
+        />
         <section className="filters" aria-labelledby="filters-title">
           <div className="section-heading">
             <h2 id="filters-title">Фильтры</h2>
@@ -172,7 +198,9 @@ export default function App() {
                   ) && <option value={query.user_id}>{query.user_id}</option>}
                 {members.map((member) => (
                   <option key={member.user_id} value={member.user_id}>
-                    {member.user_id}
+                    {member.display_name
+                      ? `${member.display_name} · ${member.user_id}`
+                      : member.user_id}
                   </option>
                 ))}
               </select>
@@ -335,7 +363,16 @@ export default function App() {
                 <tbody>
                   {page.items.map((expense) => (
                     <tr key={expense.id}>
-                      <td className="member-id">{expense.user_id}</td>
+                      <td className="member-id">
+                        <span className="member-name">
+                          {memberNames.get(expense.user_id) || expense.user_id}
+                        </span>{" "}
+                        {memberNames.get(expense.user_id) && (
+                          <small className="muted member-secondary">
+                            Telegram ID: {expense.user_id}
+                          </small>
+                        )}
+                      </td>
                       <td className="numeric amount">
                         {displayAmount(expense.amount)}
                       </td>
@@ -440,7 +477,8 @@ export default function App() {
           </div>
         </section>
         <footer className="page-footer">
-          Участники указаны по Telegram ID. Доступ к панели не требует входа.
+          Владельцы расходов определяются по Telegram ID. Доступ к панели не
+          требует входа.
         </footer>
       </main>
       {editor && (

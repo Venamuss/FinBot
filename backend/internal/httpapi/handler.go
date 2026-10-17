@@ -31,6 +31,7 @@ func New(service *expense.Service) http.Handler {
 	handler.mux.HandleFunc("PATCH /api/expenses/{id}", validateQuery(handler.update, false))
 	handler.mux.HandleFunc("DELETE /api/expenses/{id}", validateQuery(handler.delete, false))
 	handler.mux.HandleFunc("GET /api/members", validateQuery(handler.listMembers, false))
+	handler.mux.HandleFunc("PUT /api/members/{user_id}", validateQuery(handler.setMemberName, false))
 
 	// Explicit HEAD patterns override ServeMux's implicit GET-to-HEAD matching.
 	collectionMethods := methodNotAllowed("GET, POST")
@@ -42,6 +43,7 @@ func New(service *expense.Service) http.Handler {
 	handler.mux.HandleFunc("/api/expenses", collectionMethods)
 	handler.mux.HandleFunc("/api/expenses/{id}", detailMethods)
 	handler.mux.HandleFunc("/api/members", memberMethods)
+	handler.mux.HandleFunc("/api/members/{user_id}", methodNotAllowed("PUT"))
 	handler.mux.HandleFunc("/", routeNotFound)
 	return handler
 }
@@ -184,40 +186,58 @@ func (h *Handler) getByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func readInput(w http.ResponseWriter, r *http.Request) (decodedInput, bool) {
-	if !sameOrigin(r) {
-		writeError(w, http.StatusForbidden, "forbidden", "Origin запрещён", nil)
+	rawFields, ok := readObject(w, r)
+	if !ok {
 		return decodedInput{}, false
 	}
-
-	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || mediaType != "application/json" {
-		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Ожидается application/json в UTF-8", nil)
-		return decodedInput{}, false
-	}
-	for key, value := range parameters {
-		if key != "charset" || !strings.EqualFold(value, "utf-8") {
-			writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Ожидается application/json в UTF-8", nil)
-			return decodedInput{}, false
-		}
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
-	input, fields, err := decodeInput(r.Body)
-	if err != nil {
-		var maxBytesError *http.MaxBytesError
-		if errors.As(err, &maxBytesError) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Тело запроса превышает 1048576 байт", nil)
-			return decodedInput{}, false
-		}
-		writeError(w, http.StatusBadRequest, "invalid_json", "Ожидается один JSON-объект", nil)
-		return decodedInput{}, false
-	}
+	input, fields := decodeInput(rawFields)
 	if len(fields) != 0 {
 		operationError(w, fields)
 		return decodedInput{}, false
 	}
-
 	return input, true
+}
+
+// readObject applies the same transport guards to expense and member writes.
+func readObject(w http.ResponseWriter, r *http.Request) (map[string]json.RawMessage, bool) {
+	if !sameOrigin(r) {
+		writeError(w, http.StatusForbidden, "forbidden", "Origin запрещён", nil)
+		return nil, false
+	}
+	mediaType, parameters, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || mediaType != "application/json" {
+		writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Ожидается application/json в UTF-8", nil)
+		return nil, false
+	}
+	for key, value := range parameters {
+		if key != "charset" || !strings.EqualFold(value, "utf-8") {
+			writeError(w, http.StatusUnsupportedMediaType, "unsupported_media_type", "Ожидается application/json в UTF-8", nil)
+			return nil, false
+		}
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+	data, err := io.ReadAll(r.Body)
+	if err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request_too_large", "Тело запроса превышает 1048576 байт", nil)
+			return nil, false
+		}
+		writeError(w, http.StatusBadRequest, "invalid_json", "Ожидается один JSON-объект", nil)
+		return nil, false
+	}
+	if !utf8.Valid(data) {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Ожидается один JSON-объект", nil)
+		return nil, false
+	}
+	var rawFields map[string]json.RawMessage
+	err = json.Unmarshal(data, &rawFields)
+	if err != nil || rawFields == nil {
+		writeError(w, http.StatusBadRequest, "invalid_json", "Ожидается один JSON-объект", nil)
+		return nil, false
+	}
+	return rawFields, true
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
@@ -276,12 +296,9 @@ func (h *Handler) listMembers(w http.ResponseWriter, r *http.Request) {
 		operationError(w, err)
 		return
 	}
-	type memberJSON struct {
-		UserID string `json:"user_id"`
-	}
 	items := make([]memberJSON, 0, len(members))
-	for _, userID := range members {
-		items = append(items, memberJSON{UserID: strconv.FormatInt(userID, 10)})
+	for _, member := range members {
+		items = append(items, representMember(member))
 	}
 	response := struct {
 		Items []memberJSON `json:"items"`
@@ -342,21 +359,7 @@ func (input decodedInput) updateInput() expense.UpdateInput {
 	return update
 }
 
-func decodeInput(body io.Reader) (decodedInput, expense.ValidationError, error) {
-	data, err := io.ReadAll(body)
-	if err != nil {
-		return decodedInput{}, nil, err
-	}
-	if !utf8.Valid(data) {
-		return decodedInput{}, nil, errors.New("invalid body")
-	}
-
-	var rawFields map[string]json.RawMessage
-	err = json.Unmarshal(data, &rawFields)
-	if err != nil || rawFields == nil {
-		return decodedInput{}, nil, errors.New("invalid object")
-	}
-
+func decodeInput(rawFields map[string]json.RawMessage) (decodedInput, expense.ValidationError) {
 	fields := expense.ValidationError{}
 	input := decodedInput{present: rawFields}
 	for key, value := range rawFields {
@@ -394,5 +397,5 @@ func decodeInput(body io.Reader) (decodedInput, expense.ValidationError, error) 
 			fields[key] = "Ожидается строка, null запрещён"
 		}
 	}
-	return input, fields, nil
+	return input, fields
 }

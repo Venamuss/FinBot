@@ -42,6 +42,10 @@ Identifiers R01–R14 refer only to the assignment. The criteria explain how to 
 | P11 | The panel can change the owner, amount, category, date, and comment. The server generates IDs and timestamps | Project choice |
 | P12 | A persistent volume, automatic migrations, transactional protection against duplicate delivery, and server-side validation of LLM tools | Project choice for correctness and security |
 
+## Member Display Names (Requested Extension)
+
+Administrators may assign optional human-readable names to immutable Telegram IDs through the panel and member API. This is an extension requested after Slice 04, not a requirement of the original assignment. Metadata lives separately from expenses; names are trimmed, limited to 100 Unicode characters, reject control characters, and need not be unique. Blank/null names use the numeric ID fallback. Both saved metadata IDs and owners discovered in expenses appear in the member list. Names do not change ownership, permissions, the bot allowlist, or Telegram processing; no Telegram profile lookup is performed.
+
 ## Bot Allowlist
 
 - `TELEGRAM_ALLOWED_USER_IDS` contains positive Telegram IDs separated by commas. Whitespace around entries is allowed; duplicates are removed.

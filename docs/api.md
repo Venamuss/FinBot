@@ -8,8 +8,8 @@ The API requires no authentication. Any client with network access can work with
 
 - The base path is `/api`; field names use `snake_case`.
 - Responses with a body use `Content-Type: application/json`. JSON is encoded as UTF-8.
-- POST and PATCH accept `Content-Type: application/json`, optionally with `charset=utf-8`; the body is a single JSON object.
-- POST and PATCH accept at most 1 MiB (1,048,576 bytes), including JSON whitespace. A larger body returns `413` with code `request_too_large` and `fields: {}`, before JSON or field validation and without changing expenses. This applies to streamed bodies without `Content-Length` as well. Routing, query, Origin, and media-type checks retain precedence.
+- POST, PATCH, and PUT accept `Content-Type: application/json`, optionally with `charset=utf-8`; the body is a single JSON object.
+- POST, PATCH, and PUT accept at most 1 MiB (1,048,576 bytes), including JSON whitespace. A larger body returns `413` with code `request_too_large` and `fields: {}`, before JSON or field validation and without changing expenses. This applies to streamed bodies without `Content-Length` as well. Routing, query, Origin, and media-type checks retain precedence.
 - Unknown body fields are prohibited. Unknown query parameters are also prohibited.
 - IDs and amounts are transmitted as strings, not JSON numbers. Pagination metadata uses JSON numbers.
 - Every field of the full object is present in the response; an absent comment is represented as `null`.
@@ -148,17 +148,40 @@ Offset pagination does not provide a data snapshot: rows may shift when changes 
 
 `GET /api/members`
 
-Returns the unique Telegram IDs of owners of existing expenses, sorted numerically in ascending order. There are no query parameters, filters, or pagination; an unknown parameter returns `400`.
+Returns unique Telegram IDs found in existing expenses **or** saved member-name metadata, sorted numerically in ascending order. There are no query parameters, filters, or pagination; an unknown parameter returns `400`.
 
 ```json
 {
   "items": [
-    {"user_id": "123456789"}
+    {"user_id": "123456789", "display_name": "Анна"},
+    {"user_id": "987654321", "display_name": null}
   ]
 }
 ```
 
-The response is `200`; an empty result is `{"items":[]}`. After an owner's last expense is deleted, their ID disappears from the list. The list is neither an allowlist nor a separate user registry.
+The response is `200`; an empty result is `{"items":[]}`. Every member has `user_id` (a positive int64 string) and `display_name` (a string or `null`). An expense owner discovered through Telegram or REST appears without any registration or name assignment. The panel displays the name with the ID as secondary information; when the name is null, it displays the numeric ID.
+
+A member with explicitly saved metadata remains in the list after their last expense is deleted, including when the name has been cleared. An owner without metadata disappears when their last expense is deleted. Members can be named before creating any expenses. This list does not grant bot access and is not an authentication registry.
+
+## Set a Member's Display Name
+
+`PUT /api/members/{user_id}`
+
+Creates or replaces the display-name metadata for exactly the Telegram ID in the path. The same strict string-ID format applies as for expense owners. The JSON object must contain `display_name`, a string or `null`; all other fields, including `user_id`, are rejected. There are no query parameters. Existing JSON media type, UTF-8, same-origin and 1 MiB body rules apply.
+
+```json
+{"display_name": "  Анна  "}
+```
+
+The server trims surrounding Unicode whitespace. The remaining name may contain at most **100 Unicode code points**, must be valid UTF-8 and cannot contain control characters. Internal spaces are preserved. An empty/whitespace-only string or `null` clears the name. Display names need not be unique and are never fetched from Telegram automatically.
+
+Both creation and replacement return `200` with the complete member object, without a wrapper:
+
+```json
+{"user_id": "123456789", "display_name": "Анна"}
+```
+
+A cleared name returns `display_name: null`. Repeated identical PUTs have the same result. The ID is immutable: this endpoint never changes expense ownership, expense timestamps, the bot allowlist, or any other member's metadata. Invalid path IDs use `fields.user_id`; invalid/missing names use `fields.display_name`. A well-formed ID does not require a preexisting member or expense.
 
 ## Errors
 
@@ -186,7 +209,7 @@ All API errors with a body use one format:
 | `404` | `not_found` | The record or API route does not exist |
 | `405` | `method_not_allowed` | The method is not supported; the `Allow` header is also returned |
 | `413` | `request_too_large` | The JSON request body exceeds 1 MiB (1,048,576 bytes); `fields` is `{}` |
-| `415` | `unsupported_media_type` | POST/PATCH was not sent as JSON |
+| `415` | `unsupported_media_type` | POST/PATCH/PUT was not sent as JSON |
 | `500` | `internal_error` | Internal error without SQL, secrets, or technical details |
 
 A Telegram allowlist denial is not a REST error. The API does not treat a Telegram ID in a request as proof of identity: it is the panel's open administrative interface.

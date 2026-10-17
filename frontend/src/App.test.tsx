@@ -47,7 +47,10 @@ beforeEach(() => {
     const method = init.method ?? "GET";
     if (url.pathname === "/api/members")
       return json({
-        items: [{ user_id: fixture.user_id }, { user_id: "202" }],
+        items: [
+          { user_id: fixture.user_id, display_name: null },
+          { user_id: "202", display_name: null },
+        ],
       });
     if (url.pathname === "/api/expenses" && method === "POST") {
       const created = {

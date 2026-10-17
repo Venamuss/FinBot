@@ -28,6 +28,7 @@ export interface Expense extends ExpenseInput {
 
 export interface Member {
   user_id: string;
+  display_name: string | null;
 }
 export interface ExpensePage {
   items: Expense[];
@@ -152,5 +153,11 @@ export const api = {
   },
   members(signal?: AbortSignal) {
     return request<{ items: Member[] }>("/members", { signal });
+  },
+  setMemberName(userId: string, displayName: string | null) {
+    return request<Member>(`/members/${encodeURIComponent(userId)}`, {
+      method: "PUT",
+      body: JSON.stringify({ display_name: displayName }),
+    });
   },
 };

@@ -163,6 +163,15 @@ func TestPollingPipelineIntegration(t *testing.T) {
 				if !slices.Equal(api.recipients, []int64{101, 202, 303, 101}) || api.replies[3] != "Всего: 350.00" {
 					t.Fatal("incorrect recipients or owner total")
 				}
+				memberCtx, cancelMembers := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancelMembers()
+				members, err := postgres.New(pool).ListMembers(memberCtx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(members) != 2 || members[0].UserID != 101 || members[1].UserID != 202 || members[0].DisplayName != nil || members[1].DisplayName != nil {
+					t.Fatal("Telegram-created owners were not discovered as unnamed members")
+				}
 			}
 			if test.name == "natural language listing remains owner scoped" {
 				if !slices.Equal(api.recipients, []int64{101, 202, 101, 202, 101}) {

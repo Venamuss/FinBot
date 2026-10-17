@@ -56,6 +56,10 @@ def check_persistence(base, state):
     assert [item["id"] for item in page["items"]] == state["ids"]
     for item_id in state["ids"]:
         assert call(base, "GET", "/api/expenses/" + item_id)["id"] == item_id
+    members = {item["user_id"]: item["display_name"] for item in call(base, "GET", "/api/members")["items"]}
+    for member in state.get("members", []):
+        assert member["user_id"] in members
+        assert members[member["user_id"]] == member["display_name"]
 
 
 def member_ids(base):
@@ -63,8 +67,34 @@ def member_ids(base):
     assert set(response) == {"items"}
     ids = [member["user_id"] for member in response["items"]]
     assert all(isinstance(user_id, str) for user_id in ids)
+    assert all(set(member) == {"user_id", "display_name"} for member in response["items"])
     assert ids == sorted(set(ids), key=int)
     return ids
+
+
+def check_member_names(base, owner):
+    first_owner = str(int(owner) + 4)
+    second_owner = str(int(owner) + 5)
+    first_path = "/api/members/" + first_owner
+    for user_id in (first_owner, second_owner):
+        result = call(base, "PUT", "/api/members/" + user_id, {"display_name": "  Тестовый участник  "})
+        assert result == {"user_id": user_id, "display_name": "Тестовый участник"}
+        assert user_id in member_ids(base)
+    item = call(base, "POST", "/api/expenses", {
+        "user_id": first_owner, "amount": "0.10", "category": "другое", "spent_at": "2026-10-17",
+    }, expected=201)
+    expense_path = "/api/expenses/" + item["id"]
+    changed = call(base, "PUT", first_path, {"display_name": "Новое имя"})
+    assert changed == {"user_id": first_owner, "display_name": "Новое имя"}
+    assert call(base, "GET", expense_path) == item
+    call(base, "PUT", first_path, {"user_id": second_owner, "display_name": "Имя"}, expected=400)
+    call(base, "PUT", first_path, {"display_name": "я" * 101}, expected=400)
+    call(base, "PUT", first_path, {"display_name": "Имя"}, {"Origin": "https://forbidden.example"}, expected=403)
+    assert call(base, "GET", expense_path) == item
+    assert call(base, "PUT", first_path, {"display_name": "  "}) == {"user_id": first_owner, "display_name": None}
+    call(base, "DELETE", expense_path, expected=204)
+    assert first_owner in member_ids(base)
+    return [{"user_id": first_owner, "display_name": None}, {"user_id": second_owner, "display_name": "Тестовый участник"}]
 
 
 def check_mutations(base, owner):
@@ -170,6 +200,7 @@ def smoke(base):
     call(base, "POST", "/api/expenses", valid, {"Origin": "https://forbidden.example"}, expected=403)
     check_mutations(base, owner)
     state = {"owner": owner, "ids": [item["id"] for item in records[:3]]}
+    state["members"] = check_member_names(base, owner)
     check_persistence(base, state)
     return state
 
@@ -190,7 +221,7 @@ def main():
         state = smoke(args.url)
         if args.state_file:
             args.state_file.write_text(json.dumps(state))
-        print("HTTP smoke passed: CRUD, partial updates, reassignment, members, filters, sorting, pagination and errors.")
+        print("HTTP smoke passed: CRUD, member names and immutable ownership, partial updates, reassignment, filters, sorting, pagination and errors.")
 
 
 if __name__ == "__main__":
