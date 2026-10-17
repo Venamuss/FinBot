@@ -2,12 +2,15 @@ package expense
 
 import (
 	"context"
+	"strings"
 	"time"
 )
 
 // OwnerFilter has no owner field: the caller supplies the authenticated owner
 // separately, never from model arguments. Date boundaries are inclusive.
 type OwnerFilter struct {
+	// Query is a literal case-insensitive substring of the comment.
+	Query    string
 	DateFrom Date
 	DateTo   Date
 	Category Category
@@ -15,6 +18,9 @@ type OwnerFilter struct {
 
 func (filter OwnerFilter) Validate() error {
 	fields := ValidationError{}
+	if strings.ContainsRune(filter.Query, 0) || len(filter.Query) > 4096 {
+		fields["query"] = ErrInvalidComment.Error()
+	}
 	if filter.DateFrom != "" {
 		if _, err := ParseDate(string(filter.DateFrom)); err != nil {
 			fields["date_from"] = err.Error()

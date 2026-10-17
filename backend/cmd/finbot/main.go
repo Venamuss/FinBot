@@ -13,9 +13,12 @@ import (
 	"time"
 
 	"github.com/Venamuss/FinBot/internal/config"
+	"github.com/Venamuss/FinBot/internal/conversation"
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/httpapi"
+	"github.com/Venamuss/FinBot/internal/llm"
 	"github.com/Venamuss/FinBot/internal/postgres"
+	"github.com/Venamuss/FinBot/internal/telegram"
 	"github.com/Venamuss/FinBot/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -59,6 +62,12 @@ func run() error {
 		WriteTimeout:      15 * time.Second,
 		IdleTimeout:       60 * time.Second,
 	}
+	botCtx, cancelBot := context.WithCancel(signalCtx)
+	botStopped := startBot(botCtx, configuration, pool)
+	defer func() {
+		cancelBot()
+		<-botStopped
+	}()
 	return serveHTTP(signalCtx, server, listener)
 }
 
@@ -145,4 +154,33 @@ func waitForDatabase(ctx context.Context, pool *pgxpool.Pool) error {
 		case <-ticker.C:
 		}
 	}
+}
+
+func startBot(ctx context.Context, configuration config.Config, pool *pgxpool.Pool) <-chan struct{} {
+	stopped := make(chan struct{})
+	if configuration.TelegramToken == "" {
+		close(stopped)
+		return stopped
+	}
+
+	model, err := llm.New(configuration.LLM)
+	if err != nil {
+		// Load already validates these settings. Keep the REST service available.
+		slog.Error("Telegram model initialization failed")
+		close(stopped)
+		return stopped
+	}
+
+	store := postgres.NewTelegramStore(pool)
+	orchestrator := conversation.New(model, store, configuration.TelegramAllowedUserIDs, configuration.TimeZone)
+	bot := telegram.NewBot(telegram.New(configuration.TelegramToken), configuration.TelegramAllowedUserIDs, orchestrator.Handle)
+	go func() {
+		defer close(stopped)
+		slog.Info("Telegram polling started")
+		if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("Telegram polling stopped unexpectedly")
+		}
+		slog.Info("Telegram polling stopped")
+	}()
+	return stopped
 }

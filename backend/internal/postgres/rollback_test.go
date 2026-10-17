@@ -75,8 +75,18 @@ func TestListRollbackUnavailableConnection(t *testing.T) {
 	if err := <-serverDone; err != nil {
 		t.Fatal(err)
 	}
-	if pool.Stat().AcquiredConns() != 0 {
-		t.Fatal("failed transaction retained its pool connection")
+	// pgx hands a broken connection to puddle's asynchronous destructor. The
+	// server closing its socket does not imply pool statistics are updated yet.
+	releaseCtx, cancelRelease := context.WithTimeout(context.Background(), rollbackTimeout)
+	defer cancelRelease()
+	ticker := time.NewTicker(5 * time.Millisecond)
+	defer ticker.Stop()
+	for pool.Stat().AcquiredConns() != 0 {
+		select {
+		case <-releaseCtx.Done():
+			t.Fatal("failed transaction retained its pool connection")
+		case <-ticker.C:
+		}
 	}
 }
 

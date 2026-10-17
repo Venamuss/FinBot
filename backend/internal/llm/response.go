@@ -16,7 +16,23 @@ type wireToolCall struct {
 	} `json:"function"`
 }
 
-func parseResponse(body []byte, requireExactlyOne bool) (Response, error) {
+// ResponseError retains only safe protocol metadata from a rejected response.
+// Partial tool calls, arguments, content, and provider details are not exposed.
+type ResponseError struct {
+	FinishReason  string
+	ToolCallCount int
+	cause         error
+}
+
+func (err *ResponseError) Error() string {
+	return err.cause.Error()
+}
+
+func (err *ResponseError) Unwrap() error {
+	return err.cause
+}
+
+func parseResponse(body []byte, requireExactlyOne bool) (response Response, err error) {
 	var envelope struct {
 		Error   json.RawMessage `json:"error"`
 		Choices []struct {
@@ -53,11 +69,22 @@ func parseResponse(body []byte, requireExactlyOne bool) (Response, error) {
 	default:
 		return Response{}, ErrInvalidResponse
 	}
+	// The finish reason is allowlisted above. Never copy other remote strings
+	// into errors or diagnostics, even when argument validation fails below.
+	defer func() {
+		if err != nil {
+			err = &ResponseError{
+				FinishReason:  choice.FinishReason,
+				ToolCallCount: len(choice.Message.ToolCalls),
+				cause:         err,
+			}
+		}
+	}()
 	if choice.Message.Content == nil && len(choice.Message.ToolCalls) == 0 && choice.FinishReason == "stop" {
 		return Response{}, ErrInvalidResponse
 	}
 
-	response := Response{
+	response = Response{
 		Content:      choice.Message.Content,
 		FinishReason: choice.FinishReason,
 	}

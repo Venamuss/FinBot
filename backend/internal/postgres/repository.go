@@ -9,17 +9,26 @@ import (
 
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+type database interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
 type Repository struct {
 	pool *pgxpool.Pool
+	db   database
+	tx   pgx.Tx
 }
 
 const rollbackTimeout = time.Second
 
 func New(pool *pgxpool.Pool) *Repository {
-	return &Repository{pool: pool}
+	return &Repository{pool: pool, db: pool}
 }
 
 const expenseColumns = `
@@ -72,7 +81,7 @@ func (r *Repository) Create(ctx context.Context, input expense.Expense) (expense
 		VALUES ($1, $2::numeric, $3, $4::date, $5)
 		RETURNING ` + expenseColumns
 
-	row := r.pool.QueryRow(ctx, query,
+	row := r.db.QueryRow(ctx, query,
 		input.UserID,
 		input.Amount.String(),
 		string(input.Category),
@@ -88,7 +97,7 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (expense.Expense, er
 		FROM expenses
 		WHERE id = $1`
 
-	row := r.pool.QueryRow(ctx, query, id)
+	row := r.db.QueryRow(ctx, query, id)
 	return scanExpense(row)
 }
 
@@ -112,7 +121,7 @@ func (r *Repository) Update(ctx context.Context, id int64, changes expense.Chang
 		value := changes.Amount.String()
 		amount = &value
 	}
-	row := r.pool.QueryRow(ctx, query,
+	row := r.db.QueryRow(ctx, query,
 		id,
 		changes.UserID,
 		amount,
@@ -125,7 +134,7 @@ func (r *Repository) Update(ctx context.Context, id int64, changes expense.Chang
 }
 
 func (r *Repository) Delete(ctx context.Context, id int64) error {
-	result, err := r.pool.Exec(ctx, `DELETE FROM expenses WHERE id = $1`, id)
+	result, err := r.db.Exec(ctx, `DELETE FROM expenses WHERE id = $1`, id)
 	if err != nil {
 		return err
 	}
@@ -137,7 +146,7 @@ func (r *Repository) Delete(ctx context.Context, id int64) error {
 
 func (r *Repository) ListMembers(ctx context.Context) ([]int64, error) {
 	const query = `SELECT DISTINCT user_id FROM expenses ORDER BY user_id ASC`
-	rows, err := r.pool.Query(ctx, query)
+	rows, err := r.db.Query(ctx, query)
 	if err != nil {
 		return nil, err
 	}
@@ -158,6 +167,10 @@ func (r *Repository) ListMembers(ctx context.Context) ([]int64, error) {
 }
 
 func (r *Repository) List(ctx context.Context, filter expense.Filter) (expense.Page, error) {
+	return r.list(ctx, filter, "")
+}
+
+func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText string) (expense.Page, error) {
 	orderBy, err := expenseOrderBy(filter)
 	if err != nil {
 		return expense.Page{}, err
@@ -166,13 +179,21 @@ func (r *Repository) List(ctx context.Context, filter expense.Filter) (expense.P
 		return expense.Page{}, errors.New("invalid pagination or order")
 	}
 	whereClause, args := expenseWhereClause(filter)
+	whereClause, args = commentWhereClause(whereClause, args, queryText)
 
 	// A single repeatable-read snapshot keeps total and items consistent within a response.
 	options := pgx.TxOptions{
 		IsoLevel:   pgx.RepeatableRead,
 		AccessMode: pgx.ReadOnly,
 	}
-	tx, err := r.pool.BeginTx(ctx, options)
+	var tx pgx.Tx
+	if r.tx != nil {
+		// Bot operations already run in a REPEATABLE READ transaction. A savepoint
+		// preserves the existing List cleanup without committing the outer unit.
+		tx, err = r.tx.Begin(ctx)
+	} else {
+		tx, err = r.pool.BeginTx(ctx, options)
+	}
 	if err != nil {
 		return expense.Page{}, err
 	}
@@ -278,4 +299,12 @@ func expenseWhereClause(filter expense.Filter) (string, []any) {
 		clauses = append(clauses, fmt.Sprintf("category = $%d", len(args)))
 	}
 	return strings.Join(clauses, " AND "), args
+}
+
+func commentWhereClause(where string, args []any, query string) (string, []any) {
+	if query != "" {
+		args = append(args, query)
+		where += fmt.Sprintf(" AND strpos(lower(COALESCE(comment, '')), lower($%d::text)) > 0", len(args))
+	}
+	return where, args
 }

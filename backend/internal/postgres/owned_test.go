@@ -426,3 +426,28 @@ func TestOwnerGuardsAfterConcurrentPanelWriteIntegration(t *testing.T) {
 		}
 	}
 }
+
+func TestOwnedCommentSearchIntegration(t *testing.T) {
+	pool := testPool(t)
+	repository := New(pool)
+	service := expense.NewService(repository)
+	ctx := context.Background()
+	for _, owner := range []string{"101", "202"} {
+		for _, comment := range []string{"Такси 100%_", "автобус"} {
+			if _, err := service.Create(ctx, expense.Input{UserID: owner, Amount: "350", Category: "транспорт", SpentAt: "2026-10-17", Comment: &comment}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	for _, query := range []string{"такси", "%_"} {
+		filter := expense.OwnerFilter{Query: query}
+		page, err := repository.ListOwned(ctx, 101, filter, 10, 0)
+		if err != nil || page.Total != 1 || len(page.Items) != 1 || page.Items[0].UserID != 101 {
+			t.Fatalf("literal owner search: %+v %v", page, err)
+		}
+		total, err := repository.TotalOwned(ctx, 101, filter)
+		if err != nil || total != "350.00" {
+			t.Fatalf("total=%s error=%v", total, err)
+		}
+	}
+}

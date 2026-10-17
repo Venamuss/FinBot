@@ -4,15 +4,21 @@ import (
 	"errors"
 	"net"
 	"os"
+	"strings"
 	"time"
+	_ "time/tzdata"
 
+	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/llm"
 )
 
 type Config struct {
-	DatabaseURL string
-	HTTPAddr    string
-	LLM         llm.Config
+	DatabaseURL            string
+	HTTPAddr               string
+	LLM                    llm.Config
+	TelegramToken          string
+	TelegramAllowedUserIDs map[int64]bool
+	TimeZone               *time.Location
 }
 
 func Load() (Config, error) {
@@ -51,5 +57,37 @@ func Load() (Config, error) {
 	if err := configuration.LLM.Validate(); err != nil {
 		return Config{}, err
 	}
+	configuration.TelegramToken = os.Getenv("TELEGRAM_BOT_TOKEN")
+	if strings.ContainsAny(configuration.TelegramToken, " \t\r\n/?#") {
+		return Config{}, errors.New("TELEGRAM_BOT_TOKEN has invalid characters")
+	}
+	var err error
+	configuration.TelegramAllowedUserIDs, err = parseAllowlist(os.Getenv("TELEGRAM_ALLOWED_USER_IDS"))
+	if err != nil {
+		return Config{}, err
+	}
+	zone := os.Getenv("TIME_ZONE")
+	if zone == "" {
+		zone = "Europe/Moscow"
+	}
+	configuration.TimeZone, err = time.LoadLocation(zone)
+	if err != nil {
+		return Config{}, errors.New("TIME_ZONE must be a valid IANA time zone")
+	}
 	return configuration, nil
+}
+
+func parseAllowlist(value string) (map[int64]bool, error) {
+	allowed := make(map[int64]bool)
+	if strings.TrimSpace(value) == "" {
+		return allowed, nil
+	}
+	for _, entry := range strings.Split(value, ",") {
+		id, err := expense.ParseID(strings.TrimSpace(entry))
+		if err != nil {
+			return nil, errors.New("TELEGRAM_ALLOWED_USER_IDS must be comma-separated positive decimal IDs")
+		}
+		allowed[id] = true
+	}
+	return allowed, nil
 }

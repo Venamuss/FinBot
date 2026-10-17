@@ -9,7 +9,7 @@ import (
 func resetEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://synthetic-db")
-	for _, name := range []string{"HTTP_ADDR", "LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT"} {
+	for _, name := range []string{"TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "TIME_ZONE", "HTTP_ADDR", "LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT"} {
 		t.Setenv(name, "")
 	}
 }
@@ -86,5 +86,41 @@ func TestLoadInvalidSettings(t *testing.T) {
 				t.Fatal("configuration error leaked input")
 			}
 		})
+	}
+}
+
+func TestTelegramConfiguration(t *testing.T) {
+	for _, value := range []string{"", "   ", "101, 202,101", "9223372036854775807"} {
+		t.Run(value, func(t *testing.T) {
+			resetEnvironment(t)
+			t.Setenv("TELEGRAM_ALLOWED_USER_IDS", value)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.TimeZone.String() != "Europe/Moscow" {
+				t.Fatal("wrong default time zone")
+			}
+			if value == "101, 202,101" && (len(cfg.TelegramAllowedUserIDs) != 2 || !cfg.TelegramAllowedUserIDs[101] || !cfg.TelegramAllowedUserIDs[202]) {
+				t.Fatal("allowlist normalization failed")
+			}
+			if strings.TrimSpace(value) == "" && len(cfg.TelegramAllowedUserIDs) != 0 {
+				t.Fatal("empty allowlist grants access")
+			}
+		})
+	}
+	for _, value := range []string{"0", "01", "-1", "+1", "101,,202", "101,", "abc", "9223372036854775808"} {
+		t.Run(value, func(t *testing.T) {
+			resetEnvironment(t)
+			t.Setenv("TELEGRAM_ALLOWED_USER_IDS", value)
+			if _, err := Load(); err == nil {
+				t.Fatal("malformed allowlist accepted")
+			}
+		})
+	}
+	resetEnvironment(t)
+	t.Setenv("TIME_ZONE", "invalid/timezone")
+	if _, err := Load(); err == nil {
+		t.Fatal("invalid time zone accepted")
 	}
 }

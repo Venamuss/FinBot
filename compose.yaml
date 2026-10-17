@@ -1,16 +1,20 @@
 services:
   app:
     image: finbot-app:latest
-    build:
-      context: .
-      network: host
+    build: .
     environment:
       DATABASE_URL: "postgres://finbot:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}@db:5432/finbot?sslmode=disable"
       HTTP_ADDR: ":8080"
+      TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+      TELEGRAM_ALLOWED_USER_IDS: "${TELEGRAM_ALLOWED_USER_IDS:-}"
+      TIME_ZONE: "${TIME_ZONE:-Europe/Moscow}"
       LLM_BASE_URL: "${LLM_BASE_URL:-https://openrouter.ai/api/v1}"
       LLM_MODEL: "${LLM_MODEL:-google/gemma-4-31b-it:free}"
       LLM_API_KEY: "${LLM_API_KEY:-}"
       LLM_TIMEOUT: "${LLM_TIMEOUT:-30s}"
+      HTTP_PROXY: "${HTTP_PROXY:-}"
+      HTTPS_PROXY: "${HTTPS_PROXY:-}"
+      NO_PROXY: "${NO_PROXY:-localhost,127.0.0.1,db}"
     ports:
       - "${HTTP_BIND_IP:-127.0.0.1}:${HTTP_PORT:-8080}:8080"
     depends_on:

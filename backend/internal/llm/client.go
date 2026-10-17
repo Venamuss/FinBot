@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
@@ -74,6 +75,7 @@ type Function struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters"`
+	Strict      bool            `json:"strict,omitempty"`
 }
 
 type Request struct {
@@ -82,6 +84,8 @@ type Request struct {
 	// ToolChoice accepts "auto", "none", "required", or a named function object.
 	// An empty value leaves the provider default in effect.
 	ToolChoice json.RawMessage `json:"tool_choice,omitempty"`
+	// Nil leaves the provider default unchanged; false disables parallel calls.
+	ParallelToolCalls *bool `json:"parallel_tool_calls,omitempty"`
 	// This local validation flag is never sent to the provider.
 	RequireExactlyOneToolCall bool `json:"-"`
 }
@@ -153,6 +157,36 @@ func rejectRedirect(_ *http.Request, _ []*http.Request) error {
 }
 
 func (client *Client) Complete(ctx context.Context, request Request) (Response, error) {
+	logger := slog.Default().With("component", "llm")
+	started := time.Now()
+	logger.InfoContext(ctx, "LLM request started", "message_count", len(request.Messages), "tool_count", len(request.Tools))
+
+	response, err := client.complete(ctx, request)
+	logger = logger.With("duration_ms", time.Since(started).Milliseconds())
+	if err != nil {
+		if errors.Is(err, context.Canceled) {
+			logger.InfoContext(ctx, "LLM request canceled")
+		} else {
+			// complete returns only sanitized errors, never raw transport/provider details.
+			var httpError *HTTPError
+			if errors.As(err, &httpError) {
+				logger = logger.With("status_code", httpError.StatusCode)
+			}
+			var responseError *ResponseError
+			if errors.As(err, &responseError) {
+				logger = logger.With("finish_reason", responseError.FinishReason, "tool_call_count", responseError.ToolCallCount)
+			}
+			logger.ErrorContext(ctx, "LLM request failed", "error", err)
+		}
+		return response, err
+	}
+	logger.InfoContext(ctx, "LLM request completed", "finish_reason", response.FinishReason, "tool_call_count", len(response.ToolCalls))
+	return response, nil
+}
+
+// complete keeps request/response validation inside the logging boundary so every
+// attempt produces one terminal event without exposing partial or unvalidated data.
+func (client *Client) complete(ctx context.Context, request Request) (Response, error) {
 	if err := validateRequest(request); err != nil {
 		return Response{}, err
 	}

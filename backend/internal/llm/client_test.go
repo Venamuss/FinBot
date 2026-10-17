@@ -207,6 +207,38 @@ func TestCompleteResponses(t *testing.T) {
 	}
 }
 
+func TestParallelToolCallsWire(t *testing.T) {
+	for _, mode := range []string{"default", "enabled", "disabled"} {
+		t.Run(mode, func(t *testing.T) {
+			request := textRequest()
+			if mode != "default" {
+				enabled := mode == "enabled"
+				request.ParallelToolCalls = &enabled
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var payload map[string]json.RawMessage
+				if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+					t.Error(err)
+				}
+				value, present := payload["parallel_tool_calls"]
+				if mode == "default" {
+					if present {
+						t.Error("default parallel policy must be omitted")
+					}
+				} else if !present || string(value) != fmt.Sprint(mode == "enabled") {
+					t.Error("explicit parallel policy lost on wire")
+				}
+				writeResponse(t, w, textResponse)
+			}))
+			defer server.Close()
+			client := testClient(t, server.URL, "", time.Second)
+			if _, err := client.Complete(context.Background(), request); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+}
+
 func TestHTTPErrors(t *testing.T) {
 	for _, status := range []int{200, 204, 301, 400, 401, 403, 404, 429, 500, 502, 503} {
 		t.Run(fmt.Sprint(status), func(t *testing.T) {

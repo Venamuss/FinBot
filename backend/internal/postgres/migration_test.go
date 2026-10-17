@@ -145,8 +145,10 @@ func TestMigrationDownUpIntegration(t *testing.T) {
 	}
 
 	// Down only touches this test's random schema, never the application's tables.
-	if _, err := provider.Down(ctx); err != nil {
-		t.Fatal(err)
+	for range 2 {
+		if _, err := provider.Down(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	var expensesExist bool
 	const checkExpenses = `SELECT to_regclass('expenses') IS NOT NULL`

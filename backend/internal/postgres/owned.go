@@ -11,7 +11,7 @@ var _ expense.OwnerRepository = (*Repository)(nil)
 
 func (r *Repository) GetOwned(ctx context.Context, owner, id int64) (expense.Expense, error) {
 	const query = `SELECT ` + expenseColumns + ` FROM expenses WHERE user_id = $1 AND id = $2`
-	return scanExpense(r.pool.QueryRow(ctx, query, owner, id))
+	return scanExpense(r.db.QueryRow(ctx, query, owner, id))
 }
 
 func (r *Repository) LatestOwned(ctx context.Context, owner int64) (expense.Expense, error) {
@@ -20,14 +20,14 @@ func (r *Repository) LatestOwned(ctx context.Context, owner int64) (expense.Expe
 		WHERE user_id = $1
 		ORDER BY created_at DESC, id DESC
 		LIMIT 1`
-	return scanExpense(r.pool.QueryRow(ctx, query, owner))
+	return scanExpense(r.db.QueryRow(ctx, query, owner))
 }
 
 func (r *Repository) ListOwned(ctx context.Context, owner int64, filter expense.OwnerFilter, limit, offset int) (expense.Page, error) {
 	if owner <= 0 {
 		return expense.Page{}, expense.ErrInvalidID
 	}
-	return r.List(ctx, expense.Filter{
+	return r.list(ctx, expense.Filter{
 		UserID:   owner,
 		DateFrom: filter.DateFrom,
 		DateTo:   filter.DateTo,
@@ -36,7 +36,7 @@ func (r *Repository) ListOwned(ctx context.Context, owner int64, filter expense.
 		Order:    "desc",
 		Limit:    limit,
 		Offset:   offset,
-	})
+	}, filter.Query)
 }
 
 func (r *Repository) TotalOwned(ctx context.Context, owner int64, filter expense.OwnerFilter) (string, error) {
@@ -50,9 +50,10 @@ func (r *Repository) TotalOwned(ctx context.Context, owner int64, filter expense
 		DateTo:   filter.DateTo,
 		Category: filter.Category,
 	})
+	where, args = commentWhereClause(where, args, filter.Query)
 	query := `SELECT COALESCE(SUM(amount), 0.00)::text FROM expenses WHERE ` + where
 	var total string
-	if err := r.pool.QueryRow(ctx, query, args...).Scan(&total); err != nil {
+	if err := r.db.QueryRow(ctx, query, args...).Scan(&total); err != nil {
 		return "", err
 	}
 	return total, nil
@@ -75,7 +76,7 @@ func (r *Repository) UpdateOwned(ctx context.Context, owner, id int64, expectedU
 		value := changes.Amount.String()
 		amount = &value
 	}
-	row := r.pool.QueryRow(ctx, query,
+	row := r.db.QueryRow(ctx, query,
 		owner,
 		id,
 		expectedUpdatedAt,
@@ -90,7 +91,7 @@ func (r *Repository) UpdateOwned(ctx context.Context, owner, id int64, expectedU
 
 func (r *Repository) DeleteOwned(ctx context.Context, owner, id int64, expectedUpdatedAt time.Time) error {
 	const query = `DELETE FROM expenses WHERE user_id = $1 AND id = $2 AND updated_at = $3`
-	result, err := r.pool.Exec(ctx, query, owner, id, expectedUpdatedAt)
+	result, err := r.db.Exec(ctx, query, owner, id, expectedUpdatedAt)
 	if err != nil {
 		return err
 	}
