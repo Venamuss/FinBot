@@ -1,6 +1,6 @@
 # FinBot Implementation Stages
 
-Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements complete administrative expense CRUD and member lookup through a Go REST API with PostgreSQL; the full MVP is not yet implemented.
+Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements complete administrative expense CRUD and member lookup through a Go REST API with PostgreSQL, plus the owner-scoped expense operations and calendar periods of Slice 03A; the full MVP is not yet implemented.
 
 R01–R14 identify requirements from the original assignment, P01–P12 identify project decisions, and T01–T13 identify implementation and verification tasks. Contracts are documented; the actual status of the current increment is recorded below. Mark task completion together with the result and checks performed.
 
@@ -118,6 +118,36 @@ Implemented `PATCH /api/expenses/{id}`, `DELETE /api/expenses/{id}`, and `GET /a
 | Live LLM / optional local check T13 | Not executed; outside this slice |
 
 Test credentials and smoke state were kept outside the repository. The isolated test containers, network, and disposable volume were removed after verification. The existing application deployment was not changed. Work stops at this slice; the full MVP remains incomplete.
+
+## Vertical Slice 03A — Bot-ready Expense Operations — 17.10.2026
+
+Implemented the expense operations required by this slice of T02/T03. The administrative REST contract and privileges are preserved. No dependencies, schema migrations, Telegram transport, LLM adapter, or frontend were added.
+
+- `expense/owned.go`: a focused owner service and persistence boundary alongside the administrative service. Owner identity is a separate trusted-caller argument; filter and update inputs have no `user_id`, and owner updates cannot reassign records. Validation reuses existing amount/category/date/comment rules and rejects invalid owners, IDs, ranges, pagination, empty updates, and missing selected-record versions before repository access.
+- `postgres/owned.go`: owner-scoped retrieval, category/date filtering, pagination, exact totals, and latest selection ordered by `created_at DESC, id DESC`. Lists reuse the existing repeatable-read count/page snapshot. Totals use PostgreSQL `SUM(NUMERIC)` and return two-decimal strings, including `0.00`, without imposing the single-expense or int64 aggregate limit. A zero owner cannot become an unscoped list or total query.
+- Owner updates and deletes check `user_id`, `id`, and the selected `updated_at` in one parameterized SQL statement. Missing, foreign, and stale records return the same `ErrNotFound`; the later conversation layer must clarify stale selections. `postgres/repository.go` also makes administrative updates advance `updated_at` by at least one database microsecond, so even a clock correction cannot restore an old selection's version. Ownership checks remain atomic when a statement waits for another writer; transaction isolation is unchanged.
+- `expense/period.go`: `DateRangeAt` accepts a supplied reference timestamp and the caller's configured `*time.Location`, with inclusive today/yesterday, last seven days, Monday-through-today, and month-start-through-today ranges. Calculations use calendar arithmetic, never the wall clock. Loading the deployment's time zone and deriving identity from `message.from.id` remain responsibilities of the future Telegram/configuration stage.
+- Added `expense/owned_test.go`, `expense/period_test.go`, and `postgres/owned_test.go`. Coverage includes A/B retrieval and mutation isolation; combined filters and inclusive bounds; exact `0.10 + 0.20`; empty results; totals exceeding int64 hundredths; creation-time ties and purchase-date independence; stale selections after panel edits, reassignment, and deletion; competing updates/deletes; and SQL guard rechecks after a verified row-lock wait. Calendar cases include Moscow midnight, another configured zone, month/year boundaries, leap day, Monday/Sunday, and DST transitions.
+
+| Check | Verified result |
+|---|---|
+| `gofmt` on all added/modified Go files | Passed |
+| `go test ./...` and `go vet ./...` from `backend/` | Passed with `GOCACHE=/tmp/finbot-go-cache`; PostgreSQL tests explicitly skip when `TEST_DATABASE_URL` is absent |
+| All Go tests with `TEST_DATABASE_URL`, `go test ./... -count=1 -v` | Passed against disposable PostgreSQL 17 in Compose, including all existing HTTP/repository/migration tests and the new owner/concurrency tests. Test schemas are independently created and cleaned up |
+| Docker build and Compose HTTP smoke | Passed with `docker build --network host -t finbot-slice03a-check:latest .`, isolated project `finbot-slice03a-check`, and the existing `scripts/smoke.py` on `127.0.0.1:18084`; administrative CRUD, owner reassignment, member lookup, filtering, sorting, pagination, and errors remain compatible |
+| Final diff, readability/architecture review, and `git diff --check` | Passed; reviewed all added/modified Go functions, SQL parameters and ownership guards, error propagation, and unchanged transport boundaries |
+| Frontend checks; Telegram allowed A/B and denied C; duplicate-delivery transaction | Not executed: these components are not implemented and are outside Slice 03A. Repository A/B isolation does not verify the bot allowlist. These mandatory MVP checks remain pending in T06/T09/T10–T12 |
+| Live configured LLM and optional local check T13 | Not executed; outside this slice. T13 remains an additional check |
+
+Test credentials, the temporary Compose override, and smoke state stayed outside the repository. The disposable test containers, network, and volume were removed after verification; the existing deployment was left untouched. The owner service is ready for a trusted bot caller but does not itself implement allowlist checks, conversation focus, previous-amount clarification, or committing a Telegram processing result with an expense change. Those remain later-stage work. Work stops after Slice 03A; the MVP is incomplete.
+
+## Standard HTTP Mux Refactoring — 17.10.2026
+
+Replaced manual HTTP dispatch in `httpapi/handler.go` with Go 1.22-style `http.ServeMux` method/path patterns and `Request.PathValue("id")`. Retained the five-second request timeout, query validation order, JSON 404/405 envelopes, exact Allow headers, and explicit HEAD rejection. ServeMux now supplies its standard path canonicalization and per-segment URL unescaping. No dependencies or business/repository logic changed. Added routing regression cases in `httpapi/handler_test.go`.
+
+Verification: `gofmt`, `go test ./...`, `go vet ./...`, final diff review, and `git diff --check` passed. PostgreSQL integration tests skipped without `TEST_DATABASE_URL`. A rebuilt image (`docker build --network host`) passed the existing HTTP smoke script against disposable Compose project `finbot-mux-check` on port 18085; its containers, network, and test volume were removed afterward. Existing unrelated working-tree changes were preserved.
+
+Mandatory MVP checks for the frontend and Telegram allowed A/B / denied C were not run because those components are not implemented. Optional live local LLM verification remains unperformed. Stage completion status is unchanged.
 
 ## Mandatory MVP
 

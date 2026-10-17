@@ -28,6 +28,9 @@ var (
 	ErrInvalidOrder          = errors.New("Ожидается asc или desc")
 	ErrUnknownParameter      = errors.New("Неизвестный параметр")
 	ErrInvalidDateRange      = errors.New("Конец периода раньше начала")
+	ErrInvalidPeriod         = errors.New("Неизвестный календарный период")
+	ErrInvalidTimeZone       = errors.New("Не задан часовой пояс")
+	ErrInvalidVersion        = errors.New("Не задана версия выбранной траты")
 )
 
 // Amount stores hundredths; no floating point conversion is used.

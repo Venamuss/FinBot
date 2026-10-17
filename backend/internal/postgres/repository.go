@@ -95,6 +95,7 @@ func (r *Repository) GetByID(ctx context.Context, id int64) (expense.Expense, er
 func (r *Repository) Update(ctx context.Context, id int64, changes expense.Changes) (expense.Expense, error) {
 	// Apply changes to the current row in one statement, preserving omitted fields
 	// even when another request updates the same expense concurrently.
+	// Advance the version by at least one database microsecond for stale selections.
 	const query = `
 		UPDATE expenses
 		SET user_id = COALESCE($2::bigint, user_id),
@@ -102,7 +103,7 @@ func (r *Repository) Update(ctx context.Context, id int64, changes expense.Chang
 		    category = COALESCE($4::text, category),
 		    spent_at = COALESCE($5::date, spent_at),
 		    comment = CASE WHEN $6::boolean THEN $7::text ELSE comment END,
-		    updated_at = clock_timestamp()
+		    updated_at = GREATEST(clock_timestamp(), updated_at + interval '1 microsecond')
 		WHERE id = $1
 		RETURNING ` + expenseColumns
 
