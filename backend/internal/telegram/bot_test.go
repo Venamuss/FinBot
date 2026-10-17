@@ -111,7 +111,7 @@ func TestProcessLogging(t *testing.T) {
 				if record["msg"] != test.messages[index] || record["update_id"] != float64(7) || record["user_id"] != float64(test.owner) {
 					t.Fatalf("unexpected log record: %v", record)
 				}
-				if strings.HasSuffix(test.messages[index], "failed") && record["level"] != "ERROR" {
+				if strings.HasSuffix(test.messages[index], "failed") && (record["level"] != "ERROR" || record["error_category"] == nil) {
 					t.Fatal("failure not logged as error")
 				}
 				if strings.HasSuffix(test.messages[index], "completed") && record["duration_ms"] == nil {
@@ -188,7 +188,7 @@ func TestPollingRetryLoggingPreservesOffset(t *testing.T) {
 		}
 		return "private-response", nil
 	})
-	if err := bot.Run(ctx); !errors.Is(err, context.Canceled) {
+	if err := bot.Run(ctx, 5*time.Second); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 	var pollingFailures, retries, deliveries int
@@ -205,7 +205,7 @@ func TestPollingRetryLoggingPreservesOffset(t *testing.T) {
 			deliveries++
 		}
 	}
-	if polls != 4 || handled != 2 || pollingFailures != 1 || retries != 2 || deliveries != 1 {
+	if polls != 4 || handled != 2 || pollingFailures != 0 || retries != 2 || deliveries != 1 {
 		t.Fatalf("unexpected polling logs: %s", output)
 	}
 	if strings.Contains(output.String(), "private-") {

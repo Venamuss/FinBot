@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
@@ -17,17 +16,35 @@ import (
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/httpapi"
 	"github.com/Venamuss/FinBot/internal/llm"
+	"github.com/Venamuss/FinBot/internal/observability"
 	"github.com/Venamuss/FinBot/internal/postgres"
 	"github.com/Venamuss/FinBot/internal/telegram"
 	"github.com/Venamuss/FinBot/migrations"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+// startupError carries only safe stage/category metadata across the log boundary.
+type startupError struct {
+	operation string
+	category  string
+}
+
+func (err *startupError) Error() string {
+	return err.operation + " failed"
+}
+
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
 	if err := run(); err != nil {
 		// Only fixed stage errors reach logs: driver errors may contain credentials or data.
-		slog.Error(err.Error())
+		operation := "configuration"
+		category := "configuration"
+		var startup *startupError
+		if errors.As(err, &startup) {
+			operation = startup.operation
+			category = startup.category
+		}
+		slog.Error("Application stopped", "component", "app", "operation", operation, "error_category", category, "error", err.Error())
 		os.Exit(1)
 	}
 }
@@ -37,10 +54,12 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: configuration.LogLevel})))
+	slog.Info("Application starting", "component", "app", "operation", "startup")
 	signalCtx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	startupCtx, cancelStartup := context.WithTimeout(signalCtx, 30*time.Second)
+	startupCtx, cancelStartup := context.WithTimeout(signalCtx, configuration.StartupTimeout)
 	defer cancelStartup()
 	pool, err := openDatabase(startupCtx, configuration.DatabaseURL)
 	if err != nil {
@@ -50,13 +69,13 @@ func run() error {
 
 	listener, err := net.Listen("tcp", configuration.HTTPAddr)
 	if err != nil {
-		return errors.New("HTTP listen failed")
+		return &startupError{operation: "http_listen", category: observability.Category(err)}
 	}
 
 	repository := postgres.New(pool)
 	service := expense.NewService(repository)
 	server := &http.Server{
-		Handler:           httpapi.New(service),
+		Handler:           httpapi.New(service, configuration.HTTPRequestTimeout),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,
@@ -74,16 +93,17 @@ func run() error {
 func openDatabase(ctx context.Context, databaseURL string) (*pgxpool.Pool, error) {
 	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		return nil, errors.New("invalid database configuration")
+		return nil, &startupError{operation: "database_configuration", category: "configuration"}
 	}
 	if err := waitForDatabase(ctx, pool); err != nil {
 		pool.Close()
-		return nil, errors.New("database connection failed")
+		return nil, &startupError{operation: "database_connection", category: observability.Category(err)}
 	}
 	if err := migrations.Apply(ctx, pool); err != nil {
 		pool.Close()
-		return nil, errors.New("database migration failed")
+		return nil, &startupError{operation: "database_migration", category: observability.Category(err)}
 	}
+	slog.Info("Database ready and migrations applied", "component", "postgres", "operation", "startup")
 	return pool, nil
 }
 
@@ -92,7 +112,7 @@ func serveHTTP(ctx context.Context, server *http.Server, listener net.Listener) 
 	go func() {
 		serveErrors <- server.Serve(listener)
 	}()
-	slog.Info("HTTP server started")
+	slog.Info("HTTP server started", "component", "http", "operation", "listen")
 
 	var serveErr error
 	select {
@@ -104,9 +124,9 @@ func serveHTTP(ctx context.Context, server *http.Server, listener net.Listener) 
 		serveErr = <-serveErrors
 	}
 	if !errors.Is(serveErr, http.ErrServerClosed) {
-		return errors.New("HTTP server failed")
+		return &startupError{operation: "http_serve", category: observability.Category(serveErr)}
 	}
-	slog.Info("HTTP server stopped")
+	slog.Info("HTTP server stopped", "component", "http", "operation", "shutdown")
 	return nil
 }
 
@@ -118,19 +138,16 @@ func shutdownHTTP(server *http.Server) error {
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		// Shutdown's failure takes precedence over a secondary forced-close error.
 		_ = server.Close()
-		return errors.New("HTTP shutdown timed out")
+		return &startupError{operation: "http_shutdown", category: observability.Category(err)}
 	}
 	return nil
 }
 
 func waitForDatabase(ctx context.Context, pool *pgxpool.Pool) error {
-	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
-	defer cancel()
-
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 
-	var lastErr error
+	var attempt int
 
 	for {
 		pingCtx, pingCancel := context.WithTimeout(ctx, 2*time.Second)
@@ -142,15 +159,12 @@ func waitForDatabase(ctx context.Context, pool *pgxpool.Pool) error {
 			return nil
 		}
 
-		lastErr = err
+		attempt++
+		observability.Logger(ctx, "postgres", "connect").DebugContext(ctx, "Database readiness retry", "attempt", attempt, "error_category", observability.Category(err))
 
 		select {
 		case <-ctx.Done():
-			return fmt.Errorf(
-				"database not ready: %w (last ping error: %v)",
-				ctx.Err(),
-				lastErr,
-			)
+			return ctx.Err()
 		case <-ticker.C:
 		}
 	}
@@ -166,21 +180,21 @@ func startBot(ctx context.Context, configuration config.Config, pool *pgxpool.Po
 	model, err := llm.New(configuration.LLM)
 	if err != nil {
 		// Load already validates these settings. Keep the REST service available.
-		slog.Error("Telegram model initialization failed")
+		slog.Error("Telegram model initialization failed", "component", "telegram", "operation", "startup", "error_category", "configuration")
 		close(stopped)
 		return stopped
 	}
 
 	store := postgres.NewTelegramStore(pool)
 	orchestrator := conversation.New(model, store, configuration.TelegramAllowedUserIDs, configuration.TimeZone)
-	bot := telegram.NewBot(telegram.New(configuration.TelegramToken), configuration.TelegramAllowedUserIDs, orchestrator.Handle)
+	bot := telegram.NewBot(telegram.New(configuration.TelegramToken, configuration.Telegram), configuration.TelegramAllowedUserIDs, orchestrator.Handle)
 	go func() {
 		defer close(stopped)
-		slog.Info("Telegram polling started")
-		if err := bot.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
-			slog.Error("Telegram polling stopped unexpectedly")
+		slog.Info("Telegram polling started", "component", "telegram", "operation", "poll")
+		if err := bot.Run(ctx, configuration.TelegramPollRetryDelay); err != nil && !errors.Is(err, context.Canceled) {
+			slog.Error("Telegram polling stopped unexpectedly", "component", "telegram", "operation", "poll", "error_category", observability.Category(err))
 		}
-		slog.Info("Telegram polling stopped")
+		slog.Info("Telegram polling stopped", "component", "telegram", "operation", "poll")
 	}()
 	return stopped
 }

@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -14,17 +13,19 @@ import (
 	"unicode/utf8"
 
 	"github.com/Venamuss/FinBot/internal/expense"
+	"github.com/Venamuss/FinBot/internal/observability"
 )
 
 type Handler struct {
-	service *expense.Service
-	mux     *http.ServeMux
+	service        *expense.Service
+	mux            *http.ServeMux
+	requestTimeout time.Duration
 }
 
 const maxJSONBodyBytes = 1 << 20
 
-func New(service *expense.Service) http.Handler {
-	handler := &Handler{service: service, mux: http.NewServeMux()}
+func New(service *expense.Service, requestTimeout time.Duration) http.Handler {
+	handler := &Handler{service: service, mux: http.NewServeMux(), requestTimeout: requestTimeout}
 	handler.mux.HandleFunc("GET /api/expenses", validateQuery(handler.list, true))
 	handler.mux.HandleFunc("POST /api/expenses", validateQuery(handler.create, false))
 	handler.mux.HandleFunc("GET /api/expenses/{id}", validateQuery(handler.getByID, false))
@@ -83,6 +84,9 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 }
 
 func writeError(w http.ResponseWriter, status int, code, message string, fields map[string]string) {
+	if recorder, ok := w.(*responseWriter); ok && recorder.errorCategory == "" {
+		recorder.errorCategory = code
+	}
 	if fields == nil {
 		fields = map[string]string{}
 	}
@@ -97,11 +101,20 @@ func writeError(w http.ResponseWriter, status int, code, message string, fields 
 }
 
 func operationError(w http.ResponseWriter, err error) {
+	if recorder, ok := w.(*responseWriter); ok {
+		recorder.errorCategory = observability.Category(err)
+	}
 	var validationErrors expense.ValidationError
 	switch {
 	case errors.As(err, &validationErrors):
+		if recorder, ok := w.(*responseWriter); ok {
+			recorder.errorCategory = "validation"
+		}
 		writeError(w, http.StatusBadRequest, "validation_error", "Некорректные данные", validationErrors)
 	case errors.Is(err, expense.ErrNotFound):
+		if recorder, ok := w.(*responseWriter); ok {
+			recorder.errorCategory = "not_found"
+		}
 		writeError(w, http.StatusNotFound, "not_found", "Расход не найден", nil)
 	default:
 		writeError(w, http.StatusInternalServerError, "internal_error", "Внутренняя ошибка", nil)
@@ -131,13 +144,6 @@ func sameOrigin(r *http.Request) bool {
 		scheme = "https"
 	}
 	return origin.Scheme == scheme && strings.EqualFold(origin.Host, r.Host)
-}
-
-func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	defer cancel()
-
-	h.mux.ServeHTTP(w, r.WithContext(ctx))
 }
 
 func routeNotFound(w http.ResponseWriter, r *http.Request) {

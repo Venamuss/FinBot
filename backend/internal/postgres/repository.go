@@ -181,8 +181,10 @@ func (r *Repository) SetMemberName(ctx context.Context, member expense.Member) (
 		VALUES ($1, $2)
 		ON CONFLICT (user_id) DO UPDATE SET display_name = EXCLUDED.display_name
 		RETURNING user_id, display_name`
+
 	var result expense.Member
 	err := r.db.QueryRow(ctx, query, member.UserID, member.DisplayName).Scan(&result.UserID, &result.DisplayName)
+
 	if err != nil {
 		return expense.Member{}, err
 	}
@@ -195,12 +197,14 @@ func (r *Repository) List(ctx context.Context, filter expense.Filter) (expense.P
 
 func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText string) (expense.Page, error) {
 	orderBy, err := expenseOrderBy(filter)
+
 	if err != nil {
 		return expense.Page{}, err
 	}
 	if filter.Limit < 1 || filter.Limit > 100 || filter.Offset < 0 {
 		return expense.Page{}, errors.New("invalid pagination or order")
 	}
+
 	whereClause, args := expenseWhereClause(filter)
 	whereClause, args = commentWhereClause(whereClause, args, queryText)
 
@@ -217,6 +221,7 @@ func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText 
 	} else {
 		tx, err = r.pool.BeginTx(ctx, options)
 	}
+
 	if err != nil {
 		return expense.Page{}, err
 	}
@@ -233,6 +238,7 @@ func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText 
 		Limit:  filter.Limit,
 		Offset: filter.Offset,
 	}
+
 	countQuery := "SELECT count(*) FROM expenses WHERE " + whereClause
 	err = tx.QueryRow(ctx, countQuery, args...).Scan(&page.Total)
 	if err != nil {
@@ -252,6 +258,7 @@ func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText 
 		len(args)+2,
 	)
 	args = append(args, filter.Limit, filter.Offset)
+
 	rows, err := tx.Query(ctx, query, args...)
 	if err != nil {
 		return expense.Page{}, err
@@ -265,6 +272,7 @@ func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText 
 		}
 		page.Items = append(page.Items, item)
 	}
+
 	if err := rows.Err(); err != nil {
 		return expense.Page{}, err
 	}

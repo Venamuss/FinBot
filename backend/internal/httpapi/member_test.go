@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/Venamuss/FinBot/internal/expense"
 )
@@ -20,7 +21,7 @@ func TestMemberNamePut(t *testing.T) {
 	}
 	for _, tc := range tests {
 		repository := &fakeRepo{}
-		response := request(New(expense.NewService(repository)), http.MethodPut, "/api/members/9223372036854775807", tc.body, "application/json; charset=utf-8", "http://example.com")
+		response := request(New(expense.NewService(repository), 5*time.Second), http.MethodPut, "/api/members/9223372036854775807", tc.body, "application/json; charset=utf-8", "http://example.com")
 		if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != tc.want || repository.calls != 1 {
 			t.Fatalf("unexpected member response: %d %s", response.Code, response.Body)
 		}
@@ -72,7 +73,7 @@ func TestMemberNameGuards(t *testing.T) {
 				media = "application/json"
 			}
 			repository := &fakeRepo{}
-			response := request(New(expense.NewService(repository)), method, path, body, media, tc.origin)
+			response := request(New(expense.NewService(repository), 5*time.Second), method, path, body, media, tc.origin)
 			assertCRUDStatus(t, response, tc.status, tc.code)
 			if repository.calls != 0 {
 				t.Fatal("invalid member write reached repository")
@@ -86,7 +87,7 @@ func TestMemberNameGuards(t *testing.T) {
 
 func TestMemberNameDatabaseError(t *testing.T) {
 	repository := &fakeRepo{err: errors.New("private database details")}
-	response := request(New(expense.NewService(repository)), http.MethodPut, "/api/members/101", `{"display_name":"Анна"}`, "application/json", "")
+	response := request(New(expense.NewService(repository), 5*time.Second), http.MethodPut, "/api/members/101", `{"display_name":"Анна"}`, "application/json", "")
 	assertCRUDStatus(t, response, http.StatusInternalServerError, "internal_error")
 	if strings.Contains(response.Body.String(), "private") {
 		t.Fatal("database details leaked")
@@ -95,7 +96,7 @@ func TestMemberNameDatabaseError(t *testing.T) {
 
 func TestMembersReturnsAssignedNames(t *testing.T) {
 	repository := &fakeRepo{members: []int64{101, 202}}
-	handler := New(expense.NewService(repository))
+	handler := New(expense.NewService(repository), 5*time.Second)
 	response := request(handler, http.MethodPut, "/api/members/101", `{"display_name":"  Анна  "}`, "application/json", "")
 	if response.Code != http.StatusOK {
 		t.Fatal("member name write failed")

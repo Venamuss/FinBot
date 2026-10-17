@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/Venamuss/FinBot/internal/expense"
 )
@@ -57,7 +58,7 @@ func TestFilter(t *testing.T) {
 			}
 
 			repository := &fakeRepo{}
-			handler := New(expense.NewService(repository))
+			handler := New(expense.NewService(repository), 5*time.Second)
 
 			path := "/api/expenses?" + input
 			response := request(handler, http.MethodGet, path, "", "", "")

@@ -2,9 +2,11 @@ package telegram
 
 import (
 	"context"
-	"log/slog"
+	"errors"
 	"strings"
 	"time"
+
+	"github.com/Venamuss/FinBot/internal/observability"
 )
 
 const Denied = "Доступ к боту запрещён."
@@ -33,12 +35,15 @@ func NewBot(api API, allowed map[int64]bool, handle Handler) *Bot {
 }
 
 func (bot *Bot) Process(ctx context.Context, update Update) error {
-	logger := slog.Default().With("component", "telegram", "update_id", update.ID)
+	ctx = observability.WithUpdateID(ctx, update.ID)
+	logger := observability.Logger(ctx, "telegram", "process_update")
+
 	message := update.Message
 	if update.ID < 0 || message == nil || message.From == nil {
 		logger.DebugContext(ctx, "Telegram update ignored", "reason", "missing_or_invalid_identity")
 		return nil
 	}
+
 	logger = logger.With("user_id", message.From.ID)
 	if message.From.IsBot || message.From.ID <= 0 || message.Chat.Type != "private" {
 		logger.DebugContext(ctx, "Telegram update ignored", "reason", "unsupported_sender_or_chat")
@@ -52,24 +57,24 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 		logger.WarnContext(ctx, "Telegram access denied")
 		err := bot.api.Send(ctx, message.Chat.ID, Denied)
 		if err != nil && ctx.Err() == nil {
-			logger.ErrorContext(ctx, "Telegram denial delivery failed")
+			logger.ErrorContext(ctx, "Telegram denial delivery failed", "error_category", errorCategory(err))
 		}
 		return err
 	}
 	started := time.Now()
-	logger.InfoContext(ctx, "Telegram update processing started")
+	logger.DebugContext(ctx, "Telegram update processing started")
 	response, err := bot.handle(ctx, update.ID, message.From.ID, message.Text, time.Unix(message.Date, 0))
 	if err != nil {
 		if ctx.Err() == nil {
 			// Handler and transport errors may contain secrets or expense data.
-			logger.ErrorContext(ctx, "Telegram update processing failed", "duration_ms", time.Since(started).Milliseconds())
+			logger.ErrorContext(ctx, "Telegram update processing failed", "error_category", errorCategory(err), "duration_ms", time.Since(started).Milliseconds())
 		}
 		return err
 	}
 	logger.InfoContext(ctx, "Telegram update processing completed", "duration_ms", time.Since(started).Milliseconds())
 	if err := bot.api.Send(ctx, message.Chat.ID, response); err != nil {
 		if ctx.Err() == nil {
-			logger.ErrorContext(ctx, "Telegram response delivery failed")
+			logger.ErrorContext(ctx, "Telegram response delivery failed", "error_category", errorCategory(err))
 		}
 		return err
 	}
@@ -77,14 +82,11 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 	return nil
 }
 
-func (bot *Bot) Run(ctx context.Context) error {
-	logger := slog.Default().With("component", "telegram")
+func (bot *Bot) Run(ctx context.Context, retryDelay time.Duration) error {
+	logger := observability.Logger(ctx, "telegram", "poll")
 	var offset int64
 	for ctx.Err() == nil {
 		updates, err := bot.api.Updates(ctx, offset)
-		if err != nil && ctx.Err() == nil {
-			logger.ErrorContext(ctx, "Telegram polling failed", "offset", offset)
-		}
 		if err == nil {
 			logger.DebugContext(ctx, "Telegram updates received", "offset", offset, "count", len(updates))
 			for _, update := range updates {
@@ -102,12 +104,20 @@ func (bot *Bot) Run(ctx context.Context) error {
 			// Keep the unacknowledged update for retry, including failed delivery after
 			// commit. The handler must replay its stored result without another mutation.
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "Telegram polling retry scheduled", "offset", offset, "retry_delay", 5*time.Second)
+				logger.WarnContext(ctx, "Telegram polling retry scheduled", "offset", offset, "retry_delay", retryDelay, "error_category", errorCategory(err))
 			}
-			if err := wait(ctx, 5*time.Second); err != nil {
+			if err := wait(ctx, retryDelay); err != nil {
 				return err
 			}
 		}
 	}
 	return ctx.Err()
+}
+
+func errorCategory(err error) string {
+	var failure *requestError
+	if errors.As(err, &failure) {
+		return failure.category()
+	}
+	return observability.Category(err)
 }

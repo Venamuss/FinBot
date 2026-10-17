@@ -6,10 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/Venamuss/FinBot/internal/observability"
 )
 
 var ErrAPI = errors.New("Telegram API request failed")
@@ -51,34 +52,44 @@ type Chat struct {
 	Type string `json:"type"`
 }
 
-type Client struct {
-	endpoint   string
-	httpClient *http.Client
-	retryDelay time.Duration
+type Config struct {
+	Timeout     time.Duration
+	PollTimeout time.Duration
+	RetryDelay  time.Duration
 }
 
-func New(token string) *Client {
+type Client struct {
+	pollTimeout time.Duration
+	endpoint    string
+	httpClient  *http.Client
+	retryDelay  time.Duration
+}
+
+func New(token string, configuration Config) *Client {
 	return &Client{
-		endpoint: "https://api.telegram.org/bot" + token + "/",
+		pollTimeout: configuration.PollTimeout,
+		endpoint:    "https://api.telegram.org/bot" + token + "/",
 		httpClient: &http.Client{
-			Timeout: 40 * time.Second,
+			Timeout: configuration.Timeout,
 			CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 				return http.ErrUseLastResponse
 			},
 		},
-		retryDelay: time.Second,
+		retryDelay: configuration.RetryDelay,
 	}
 }
 
 func (client *Client) Updates(ctx context.Context, offset int64) ([]Update, error) {
-	slog.DebugContext(ctx, "Telegram poll requested", "component", "telegram", "offset", offset)
+	observability.Logger(ctx, "telegram", "getUpdates").DebugContext(ctx, "Telegram poll requested", "offset", offset)
 	request := struct {
 		Offset  int64    `json:"offset"`
 		Timeout int      `json:"timeout"`
 		Allowed []string `json:"allowed_updates"`
-	}{offset, 25, []string{"message"}}
+	}{offset, int(client.pollTimeout / time.Second), []string{"message"}}
+
 	var updates []Update
 	err := client.call(ctx, "getUpdates", request, &updates)
+
 	return updates, err
 }
 
@@ -95,7 +106,9 @@ func (client *Client) call(ctx context.Context, method string, input, output any
 	if err != nil {
 		return ErrAPI
 	}
+
 	for attempt := 0; attempt < 3; attempt++ {
+		started := time.Now()
 		retry, err := client.request(ctx, method, body, output)
 		if err == nil {
 			return nil
@@ -105,7 +118,8 @@ func (client *Client) call(ctx context.Context, method string, input, output any
 		}
 		var failure *requestError
 		if errors.As(err, &failure) {
-			slog.WarnContext(ctx, "Telegram API request failed", "component", "telegram",
+			observability.Logger(ctx, "telegram", method).WarnContext(ctx, "Telegram API request failed",
+				"duration_ms", time.Since(started).Milliseconds(), "error_category", failure.category(),
 				"method", method, "attempt", attempt+1, "reason", failure.reason,
 				"http_status", failure.httpStatus, "api_error_code", failure.apiCode, "retryable", retry)
 		}
@@ -124,6 +138,7 @@ func (client *Client) request(ctx context.Context, method string, body []byte, o
 	if err != nil {
 		return false, &requestError{reason: "invalid_request"}
 	}
+
 	request.Header.Set("Content-Type", "application/json")
 	response, err := client.httpClient.Do(request)
 	if err != nil {
@@ -136,12 +151,18 @@ func (client *Client) request(ctx context.Context, method string, body []byte, o
 		return true, &requestError{reason: reason}
 	}
 	defer response.Body.Close()
+
 	if response.StatusCode != http.StatusOK {
 		return response.StatusCode == 429 || response.StatusCode >= 500, &requestError{reason: "http_status", httpStatus: response.StatusCode}
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
 	if err != nil {
-		return false, &requestError{reason: "response_read", httpStatus: response.StatusCode}
+		reason := "response_read"
+		var networkError net.Error
+		if errors.Is(err, context.DeadlineExceeded) || errors.As(err, &networkError) && networkError.Timeout() {
+			reason = "timeout"
+		}
+		return false, &requestError{reason: reason, httpStatus: response.StatusCode}
 	}
 	if len(data) > 1<<20 {
 		return false, &requestError{reason: "response_too_large", httpStatus: response.StatusCode}
@@ -174,5 +195,19 @@ func wait(ctx context.Context, delay time.Duration) error {
 		return ctx.Err()
 	case <-timer.C:
 		return nil
+	}
+}
+
+func (err *requestError) category() string {
+	if err.httpStatus == 429 || err.apiCode == 429 {
+		return "rate_limit"
+	}
+	switch err.reason {
+	case "timeout", "network":
+		return err.reason
+	case "http_status", "api_error":
+		return "api"
+	default:
+		return "protocol"
 	}
 }

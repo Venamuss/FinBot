@@ -90,6 +90,7 @@ func (s *OwnerService) GetByID(ctx context.Context, owner, id int64) (Expense, e
 	if owner <= 0 || id <= 0 {
 		return Expense{}, ErrInvalidID
 	}
+
 	return s.repo.GetOwned(ctx, owner, id)
 }
 
@@ -103,6 +104,7 @@ func (s *OwnerService) List(ctx context.Context, owner int64, filter OwnerFilter
 	if limit < 1 || limit > 100 || offset < 0 || offset > 2147483647 {
 		return Page{}, ErrInvalidPagination
 	}
+
 	return s.repo.ListOwned(ctx, owner, filter, limit, offset)
 }
 
@@ -115,6 +117,7 @@ func (s *OwnerService) Total(ctx context.Context, owner int64, filter OwnerFilte
 	if err := filter.Validate(); err != nil {
 		return "", err
 	}
+
 	return s.repo.TotalOwned(ctx, owner, filter)
 }
 
@@ -132,10 +135,12 @@ func (s *OwnerService) Update(ctx context.Context, owner, id int64, expectedUpda
 	if expectedUpdatedAt.IsZero() {
 		return Expense{}, ErrInvalidVersion
 	}
+
 	changes, err := input.Validate()
 	if err != nil {
 		return Expense{}, err
 	}
+
 	return s.repo.UpdateOwned(ctx, owner, id, expectedUpdatedAt, changes)
 }
 
@@ -146,5 +151,6 @@ func (s *OwnerService) Delete(ctx context.Context, owner, id int64, expectedUpda
 	if expectedUpdatedAt.IsZero() {
 		return ErrInvalidVersion
 	}
+
 	return s.repo.DeleteOwned(ctx, owner, id, expectedUpdatedAt)
 }

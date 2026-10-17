@@ -5,12 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"sync"
 	"time"
 
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/llm"
+	"github.com/Venamuss/FinBot/internal/observability"
 )
 
 const Denied = "Доступ к боту запрещён."
@@ -34,7 +34,7 @@ For other tools, omit unused optional arguments; never send empty strings.
 query is only a literal expense description, never the whole request or a wildcard.
 Use clarify only when necessary information is missing. Context JSON: `
 
-// Repositories is supplied by the transaction boundary. Business validation
+// Repositories are supplied by the transaction boundary. Business validation
 // still goes through the existing expense services.
 type Repositories interface {
 	expense.Repository
@@ -81,6 +81,7 @@ func New(model Model, store Store, allowed map[int64]bool, location *time.Locati
 	for id, permitted := range allowed {
 		copyAllowed[id] = permitted
 	}
+
 	return &Orchestrator{
 		model:    model,
 		store:    store,
@@ -96,24 +97,32 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 	if owner <= 0 || !orchestrator.allowed[owner] {
 		return Denied, nil
 	}
+
+	ctx = observability.WithUpdateID(ctx, updateID)
+
 	orchestrator.mu.Lock()
 	defer orchestrator.mu.Unlock()
+
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
+
 	response, found, err := orchestrator.store.Lookup(ctx, updateID, owner)
 	if err != nil || found {
 		return response, err
 	}
+
 	now := orchestrator.now()
 	for id, current := range orchestrator.states {
 		if now.Sub(current.touched) >= 30*time.Minute {
 			delete(orchestrator.states, id)
 		}
 	}
+
 	current := orchestrator.states[owner]
 	current.touched = now
 	orchestrator.states[owner] = current
+
 	planned, err := orchestrator.model.Complete(ctx, orchestrator.request(text, reference, current))
 	if err != nil {
 		if ctx.Err() != nil {
@@ -125,13 +134,16 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 		// Persist a safe failure result so one poison update cannot block polling.
 		return orchestrator.saveReply(ctx, updateID, owner, "Не удалось обратиться к модели. Повторите запрос новым сообщением.")
 	}
+
 	operation, err := parseAction(planned)
 	if err != nil {
 		// Tool names and arguments are untrusted until parseAction succeeds.
-		slog.WarnContext(ctx, "Conversation action rejected", "component", "conversation", "stage", "tool_arguments")
+		observability.Logger(ctx, "conversation", "plan_action").WarnContext(ctx, "Conversation action rejected", "error_category", "invalid_tool_call", "stage", "tool_arguments")
 		return orchestrator.saveReply(ctx, updateID, owner, invalidRequest)
 	}
-	slog.InfoContext(ctx, "Conversation action selected", "component", "conversation", "tool", operation.name)
+
+	observability.Logger(ctx, "conversation", "plan_action").InfoContext(ctx, "Conversation action selected", "tool", operation.name)
+
 	var next state
 	response, committed, err := orchestrator.store.Execute(ctx, updateID, owner, func(transactionCtx context.Context, repo Repositories) (string, error) {
 		// Each transaction retry starts from the same pre-message state.
@@ -142,6 +154,7 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 	if err == nil && committed {
 		orchestrator.states[owner] = next
 	}
+
 	return response, err
 }
 
@@ -185,9 +198,11 @@ func operationError(err error) (string, error) {
 	if errors.Is(err, expense.ErrNotFound) {
 		return staleSelection, nil
 	}
+
 	var validation expense.ValidationError
 	if errors.As(err, &validation) || errors.Is(err, errArguments) || errors.Is(err, expense.ErrInvalidID) || errors.Is(err, expense.ErrInvalidPeriod) {
 		return invalidRequest, nil
 	}
+
 	return "", err
 }

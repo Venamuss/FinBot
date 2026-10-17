@@ -25,7 +25,9 @@ func DateRangeAt(period Period, reference time.Time, location *time.Location) (D
 	}
 	local := reference.In(location)
 	today := time.Date(local.Year(), local.Month(), local.Day(), 0, 0, 0, 0, location)
+
 	from, to := today, today
+
 	switch period {
 	case PeriodToday:
 	case PeriodYesterday:
@@ -40,14 +42,18 @@ func DateRangeAt(period Period, reference time.Time, location *time.Location) (D
 		from = time.Date(today.Year(), today.Month(), 1, 0, 0, 0, 0, location)
 	default:
 		return DateRange{}, ErrInvalidPeriod
+
 	}
+
 	dateFrom, err := ParseDate(from.Format(time.DateOnly))
 	if err != nil {
 		return DateRange{}, err
 	}
+
 	dateTo, err := ParseDate(to.Format(time.DateOnly))
 	if err != nil {
 		return DateRange{}, err
 	}
+
 	return DateRange{From: dateFrom, To: dateTo}, nil
 }

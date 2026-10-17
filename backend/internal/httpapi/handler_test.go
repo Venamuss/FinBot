@@ -123,7 +123,7 @@ func request(handler http.Handler, method, path, body, mediaType, origin string)
 
 func TestCreateGetList(t *testing.T) {
 	repository := &fakeRepo{}
-	handler := New(expense.NewService(repository))
+	handler := New(expense.NewService(repository), 5*time.Second)
 
 	response := request(handler, http.MethodPost, "/api/expenses", validBody, "application/json; charset=utf-8", "")
 	if response.Code != http.StatusCreated {
@@ -182,7 +182,7 @@ func TestCreateGetList(t *testing.T) {
 
 func TestListFilters(t *testing.T) {
 	repository := &fakeRepo{}
-	handler := New(expense.NewService(repository))
+	handler := New(expense.NewService(repository), 5*time.Second)
 	path := "/api/expenses?user_id=7&category=еда&date_from=2026-10-01&date_to=2026-10-16" +
 		"&sort=amount&order=asc&limit=3&offset=2"
 	response := request(handler, http.MethodGet, path, "", "", "")
@@ -210,7 +210,7 @@ func TestGetByIDTransportValidation(t *testing.T) {
 	for _, rawID := range invalidIDs {
 		t.Run(rawID, func(t *testing.T) {
 			repository := &fakeRepo{}
-			handler := New(expense.NewService(repository))
+			handler := New(expense.NewService(repository), 5*time.Second)
 
 			path := "/api/expenses/" + rawID
 			response := request(handler, http.MethodGet, path, "", "", "")
@@ -256,7 +256,7 @@ func TestComment(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := &fakeRepo{}
-			handler := New(expense.NewService(repository))
+			handler := New(expense.NewService(repository), 5*time.Second)
 			body := strings.TrimSuffix(validBody, "}") + tc.suffix + "}"
 			response := request(handler, http.MethodPost, "/api/expenses", body, "application/json", "")
 			if response.Code != http.StatusCreated {
@@ -319,7 +319,7 @@ func TestCreateBodySizeLimit(t *testing.T) {
 		for _, transfer := range transfers {
 			t.Run(tc.name+"/"+transfer.name, func(t *testing.T) {
 				repository := &fakeRepo{}
-				handler := New(expense.NewService(repository))
+				handler := New(expense.NewService(repository), 5*time.Second)
 
 				req := httptest.NewRequest(http.MethodPost, "/api/expenses", strings.NewReader(tc.body))
 				req.Header.Set("Content-Type", "application/json")
@@ -709,7 +709,7 @@ func TestErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := &fakeRepo{}
-			response := request(New(expense.NewService(repository)), tc.method, tc.path, tc.body, tc.mediaType, tc.origin)
+			response := request(New(expense.NewService(repository), 5*time.Second), tc.method, tc.path, tc.body, tc.mediaType, tc.origin)
 			if response.Code != tc.status {
 				t.Fatalf("status %d: %s", response.Code, response.Body)
 			}
@@ -756,7 +756,7 @@ func TestInternalErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := &fakeRepo{err: errors.New("secret SQL details")}
-			handler := New(expense.NewService(repository))
+			handler := New(expense.NewService(repository), 5*time.Second)
 			response := request(handler, tc.method, tc.path, tc.body, "application/json", "")
 			if response.Code != http.StatusInternalServerError {
 				t.Fatalf("status %d: %s", response.Code, response.Body)
@@ -772,7 +772,7 @@ func TestInternalErrors(t *testing.T) {
 }
 
 func TestEmptyList(t *testing.T) {
-	handler := New(expense.NewService(&fakeRepo{}))
+	handler := New(expense.NewService(&fakeRepo{}), 5*time.Second)
 	response := request(handler, http.MethodGet, "/api/expenses", "", "", "")
 
 	if response.Code != http.StatusOK {
@@ -787,7 +787,7 @@ func TestEmptyList(t *testing.T) {
 }
 
 func TestSameOriginAccepted(t *testing.T) {
-	handler := New(expense.NewService(&fakeRepo{}))
+	handler := New(expense.NewService(&fakeRepo{}), 5*time.Second)
 	response := request(handler, http.MethodPost, "http://example.com/api/expenses",
 		validBody, "application/json", "http://example.com")
 
@@ -818,7 +818,7 @@ func TestMuxRoutingErrors(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := &fakeRepo{}
-			handler := New(expense.NewService(repository))
+			handler := New(expense.NewService(repository), 5*time.Second)
 			// Routing errors must take precedence over malformed query strings.
 			response := request(handler, tc.method, tc.path+"?bad=%zz", "", "", "")
 			if response.Code != tc.status {

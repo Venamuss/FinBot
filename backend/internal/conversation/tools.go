@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"slices"
 	"sort"
 
 	"github.com/Venamuss/FinBot/internal/llm"
@@ -202,12 +203,7 @@ func parseAction(response llm.Response) (action, error) {
 }
 
 func contains(values []string, value string) bool {
-	for _, candidate := range values {
-		if candidate == value {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(values, value)
 }
 
 func (operation action) value(key string) string {

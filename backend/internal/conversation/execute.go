@@ -3,16 +3,17 @@ package conversation
 import (
 	"context"
 	"fmt"
-	"log/slog"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/Venamuss/FinBot/internal/expense"
+	"github.com/Venamuss/FinBot/internal/observability"
 )
 
 func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories, owner int64, operation action, text string, reference time.Time, next *state) (string, error) {
 	service := expense.NewOwnerService(repo)
+
 	if operation.name == "choose_expense" {
 		return orchestrator.choose(ctx, service, owner, operation, next)
 	}
@@ -24,19 +25,24 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 			"target":   "Какую трату выбрать?",
 			"request":  "Уточните действие и данные траты.",
 		}
+
 		question, ok := questions[operation.value("field")]
 		if !ok {
 			return invalidRequest, nil
 		}
+
 		if next.pending != nil && next.pending.action.name == "" {
 			text = next.pending.text + "\n" + text
 			reference = next.pending.reference
 		}
+
 		if len(text) > 16384 {
 			next.pending = nil
 			return "Уточните запрос одним сообщением.", nil
+
 		}
 		next.pending = &pending{text: text, reference: reference}
+
 		return question, nil
 	}
 	if next.pending != nil && next.pending.action.name == "" {
@@ -65,7 +71,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 	case "list_expenses", "total_expenses":
 		filter, err := orchestrator.filter(operation, reference)
 		if err != nil {
-			slog.WarnContext(ctx, "Conversation action rejected", "component", "conversation", "stage", "expense_filter", "tool", operation.name)
+			observability.Logger(ctx, "conversation", "execute_action").WarnContext(ctx, "Conversation action rejected", "error_category", "validation", "stage", "expense_filter", "tool", operation.name)
 			return invalidFilter, nil
 		}
 		if operation.name == "total_expenses" {
@@ -98,12 +104,14 @@ func (orchestrator *Orchestrator) date(value string, reference time.Time) (strin
 		return string(dates.From), err
 	}
 	date, err := expense.ParseDate(value)
+
 	return string(date), err
 }
 
 func (orchestrator *Orchestrator) filter(operation action, reference time.Time) (expense.OwnerFilter, error) {
 	filter := expense.OwnerFilter{Category: expense.Category(operation.value("category")), Query: operation.value("query")}
 	period := operation.value("period")
+
 	if period == "" && operation.value("date_from") == "" && operation.value("date_to") == "" {
 		period = string(expense.PeriodToday)
 	}
@@ -121,17 +129,20 @@ func (orchestrator *Orchestrator) filter(operation action, reference time.Time) 
 		filter.DateFrom = expense.Date(operation.value("date_from"))
 		filter.DateTo = expense.Date(operation.value("date_to"))
 	}
+
 	return filter, filter.Validate()
 }
 
 func (orchestrator *Orchestrator) updateInput(operation action, reference time.Time) (expense.OwnerUpdateInput, error) {
 	_, commentSet := operation.args["comment"]
+
 	input := expense.OwnerUpdateInput{
 		Amount:     operation.args["amount"],
 		Category:   operation.args["category"],
 		Comment:    operation.args["comment"],
 		CommentSet: commentSet,
 	}
+
 	if operation.args["spent_at"] != nil {
 		date, err := orchestrator.date(operation.value("spent_at"), reference)
 		if err != nil {
@@ -140,6 +151,7 @@ func (orchestrator *Orchestrator) updateInput(operation action, reference time.T
 		input.SpentAt = &date
 	}
 	_, err := input.Validate()
+
 	return input, err
 }
 
@@ -152,6 +164,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 			return invalidRequest, nil
 		}
 	}
+
 	var previous expense.Amount
 	if operation.args["previous_amount"] != nil {
 		value, err := expense.ParseAmount(operation.value("previous_amount"))
@@ -160,12 +173,14 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 		}
 		previous = value
 	}
+
 	candidates, err := selectExpenses(ctx, service, owner, operation, next.focus)
 	if err != nil {
 		next.focus = nil
 		next.pending = nil
 		return operationError(err)
 	}
+
 	if len(candidates) == 0 {
 		return "Траты не найдены.", nil
 	}
@@ -191,8 +206,10 @@ func selectExpenses(ctx context.Context, service *expense.OwnerService, owner in
 		page, err := service.List(ctx, owner, expense.OwnerFilter{Query: query}, 11, 0)
 		return page.Items, err
 	}
+
 	var item expense.Expense
 	var err error
+
 	if value := operation.value("id"); value != "" {
 		id, parseErr := expense.ParseID(value)
 		if parseErr != nil {
@@ -204,12 +221,14 @@ func selectExpenses(ctx context.Context, service *expense.OwnerService, owner in
 	} else {
 		item, err = service.Latest(ctx, owner)
 	}
+
 	if err != nil {
 		return nil, err
 	}
 	if focus != nil && item.ID == focus.ID && !item.UpdatedAt.Equal(focus.UpdatedAt) {
 		return nil, expense.ErrNotFound
 	}
+
 	return []expense.Expense{item}, nil
 }
 
@@ -218,10 +237,12 @@ func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.O
 		next.pending = nil
 		return "Выбор отменён. Укажите нужное действие.", nil
 	}
+
 	choice, err := expense.ParseID(operation.value("choice"))
 	if err != nil || next.pending == nil || choice < 1 || choice > int64(len(next.pending.candidates)) {
 		return "Нет такого варианта. Укажите нужную трату заново.", nil
 	}
+
 	selected := next.pending.candidates[choice-1]
 	deferred := next.pending
 	current, err := service.GetByID(ctx, owner, selected.ID)
@@ -233,6 +254,7 @@ func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.O
 		}
 		return staleSelection, nil
 	}
+
 	if previous := deferred.action.value("previous_amount"); previous != "" && !deferred.confirmAmount {
 		amount, err := expense.ParseAmount(previous)
 		if err != nil {

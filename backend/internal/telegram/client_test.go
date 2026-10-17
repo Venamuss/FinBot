@@ -13,7 +13,7 @@ import (
 )
 
 func testClient(server *httptest.Server) *Client {
-	client := New("synthetic-token")
+	client := New("synthetic-token", Config{Timeout: 40 * time.Second, PollTimeout: 25 * time.Second, RetryDelay: time.Second})
 	client.endpoint = server.URL + "/bot-token/"
 	client.retryDelay = time.Millisecond
 	return client
@@ -106,7 +106,7 @@ func TestPollingAndCancellation(t *testing.T) {
 	bot := NewBot(testClient(server), map[int64]bool{101: true}, func(context.Context, int64, int64, string, time.Time) (string, error) {
 		return "ok", nil
 	})
-	if err := bot.Run(ctx); !errors.Is(err, context.Canceled) {
+	if err := bot.Run(ctx, 5*time.Second); !errors.Is(err, context.Canceled) {
 		t.Fatal(err)
 	}
 }
@@ -152,5 +152,29 @@ func TestCancelHTTPAndMalformed(t *testing.T) {
 	defer cancel()
 	if _, err := testClient(server).Updates(ctx, 0); !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatal(err)
+	}
+}
+
+func TestConfiguredPollingTimeout(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var input struct {
+			Timeout int `json:"timeout"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
+			t.Error(err)
+		}
+		if input.Timeout != 10 {
+			t.Error("configured poll timeout not sent")
+		}
+		_, _ = w.Write([]byte(`{"ok":true,"result":[]}`))
+	}))
+	defer server.Close()
+	client := New("synthetic-token", Config{Timeout: 15 * time.Second, PollTimeout: 10 * time.Second, RetryDelay: 2 * time.Millisecond})
+	client.endpoint = server.URL + "/bot-token/"
+	if _, err := client.Updates(context.Background(), 0); err != nil {
+		t.Fatal(err)
+	}
+	if client.httpClient.Timeout != 15*time.Second || client.retryDelay != 2*time.Millisecond {
+		t.Fatal("configured transport timing not applied")
 	}
 }

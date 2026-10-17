@@ -42,7 +42,7 @@ func TestPatch(t *testing.T) {
 				CreatedAt: time.Date(2026, 10, 16, 9, 0, 0, 0, time.UTC),
 				UpdatedAt: time.Date(2026, 10, 16, 10, 0, 0, 0, time.UTC),
 			}}
-			handler := New(expense.NewService(repository))
+			handler := New(expense.NewService(repository), 5*time.Second)
 			response := request(handler, http.MethodPatch, "/api/expenses/42", tc.body, "application/json; charset=utf-8", "http://example.com")
 			if response.Code != http.StatusOK {
 				t.Fatalf("status %d: %s", response.Code, response.Body)
@@ -101,7 +101,7 @@ func TestPatchInvalidBodies(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.body, func(t *testing.T) {
 			repository := &fakeRepo{}
-			response := request(New(expense.NewService(repository)), http.MethodPatch, "/api/expenses/42", tc.body, "application/json", "")
+			response := request(New(expense.NewService(repository), 5*time.Second), http.MethodPatch, "/api/expenses/42", tc.body, "application/json", "")
 			assertCRUDStatus(t, response, http.StatusBadRequest, tc.code)
 			if repository.calls != 0 {
 				t.Fatal("invalid body reached repository")
@@ -274,7 +274,7 @@ func TestCRUDRoutingAndGuards(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			repository := &fakeRepo{}
-			response := request(New(expense.NewService(repository)), tc.method, tc.path, `{"amount":"1"}`, tc.media, tc.origin)
+			response := request(New(expense.NewService(repository), 5*time.Second), tc.method, tc.path, `{"amount":"1"}`, tc.media, tc.origin)
 			assertCRUDStatus(t, response, tc.status, tc.code)
 			if repository.calls != tc.calls || response.Header().Get("Allow") != tc.allow {
 				t.Fatalf("unexpected calls or Allow: %d, %q", repository.calls, response.Header().Get("Allow"))
@@ -285,7 +285,7 @@ func TestCRUDRoutingAndGuards(t *testing.T) {
 
 func TestDeleteAndRepeat(t *testing.T) {
 	repository := &fakeRepo{stored: expense.Expense{ID: 42}}
-	handler := New(expense.NewService(repository))
+	handler := New(expense.NewService(repository), 5*time.Second)
 	response := request(handler, http.MethodDelete, "/api/expenses/42", "", "", "http://example.com")
 	if response.Code != http.StatusNoContent || response.Body.Len() != 0 || response.Header().Get("Content-Type") != "" {
 		t.Fatalf("expected bodyless 204, got %d: %s", response.Code, response.Body)
@@ -300,7 +300,7 @@ func TestDeleteAndRepeat(t *testing.T) {
 func TestMembers(t *testing.T) {
 	for _, members := range [][]int64{nil, {2, 10, 9223372036854775807}} {
 		repository := &fakeRepo{members: members}
-		response := request(New(expense.NewService(repository)), http.MethodGet, "/api/members", "", "", "")
+		response := request(New(expense.NewService(repository), 5*time.Second), http.MethodGet, "/api/members", "", "", "")
 		want := `{"items":[]}`
 		if len(members) != 0 {
 			want = `{"items":[{"user_id":"2","display_name":null},{"user_id":"10","display_name":null},{"user_id":"9223372036854775807","display_name":null}]}`
@@ -328,7 +328,7 @@ func TestPatchBodySizeLimit(t *testing.T) {
 				req.TransferEncoding = []string{"chunked"}
 			}
 			response := httptest.NewRecorder()
-			New(expense.NewService(repository)).ServeHTTP(response, req)
+			New(expense.NewService(repository), 5*time.Second).ServeHTTP(response, req)
 			if oversized {
 				assertCRUDStatus(t, response, http.StatusRequestEntityTooLarge, "request_too_large")
 				if repository.calls != 0 {

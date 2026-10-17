@@ -20,10 +20,12 @@ func (s *Service) SetMemberName(ctx context.Context, userID string, displayName 
 	if err != nil {
 		return Member{}, ValidationError{"user_id": err.Error()}
 	}
+
 	name, err := normalizeDisplayName(displayName)
 	if err != nil {
 		return Member{}, ValidationError{"display_name": err.Error()}
 	}
+
 	return s.repo.SetMemberName(ctx, Member{UserID: id, DisplayName: name})
 }
 
@@ -32,6 +34,7 @@ func normalizeDisplayName(value *string) (*string, error) {
 		return nil, nil
 	}
 	name := strings.TrimSpace(*value)
+
 	if !utf8.ValidString(name) || utf8.RuneCountInString(name) > MaxDisplayNameLength {
 		return nil, ErrInvalidDisplayName
 	}
@@ -40,6 +43,7 @@ func normalizeDisplayName(value *string) (*string, error) {
 			return nil, ErrInvalidDisplayName
 		}
 	}
+
 	if name == "" {
 		return nil, nil
 	}

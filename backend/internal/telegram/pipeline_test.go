@@ -132,7 +132,7 @@ func TestPollingPipelineIntegration(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(api.serveHTTP))
 			defer server.Close()
 			bot := NewBot(testClient(server), allowed, orchestrator.Handle)
-			if err := bot.Run(ctx); !errors.Is(err, context.Canceled) {
+			if err := bot.Run(ctx, 5*time.Second); !errors.Is(err, context.Canceled) {
 				t.Fatalf("pipeline did not acknowledge batch: %v", err)
 			}
 			api.mutex.Lock()

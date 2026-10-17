@@ -9,12 +9,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"github.com/Venamuss/FinBot/internal/observability"
 )
 
 const maxResponseBytes = 1 << 20
@@ -96,7 +97,14 @@ type ToolCall struct {
 	Arguments json.RawMessage
 }
 
+type Usage struct {
+	PromptTokens     int64 `json:"prompt_tokens"`
+	CompletionTokens int64 `json:"completion_tokens"`
+	TotalTokens      int64 `json:"total_tokens"`
+}
+
 type Response struct {
+	Usage     *Usage
 	Content   *string
 	ToolCalls []ToolCall
 	// Callers must inspect length/content_filter before using text as a complete answer.
@@ -157,12 +165,21 @@ func rejectRedirect(_ *http.Request, _ []*http.Request) error {
 }
 
 func (client *Client) Complete(ctx context.Context, request Request) (Response, error) {
-	logger := slog.Default().With("component", "llm")
+	logger := observability.Logger(ctx, "llm", "chat_completions").With("model", client.model)
 	started := time.Now()
-	logger.InfoContext(ctx, "LLM request started", "message_count", len(request.Messages), "tool_count", len(request.Tools))
+	logger.DebugContext(ctx, "LLM request started", "message_count", len(request.Messages), "tool_count", len(request.Tools))
 
 	response, err := client.complete(ctx, request)
 	logger = logger.With("duration_ms", time.Since(started).Milliseconds())
+
+	usage := response.Usage
+	var responseError *ResponseError
+	if errors.As(err, &responseError) {
+		usage = responseError.Usage
+	}
+	if usage != nil {
+		logger = logger.With("prompt_tokens", usage.PromptTokens, "completion_tokens", usage.CompletionTokens, "total_tokens", usage.TotalTokens)
+	}
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			logger.InfoContext(ctx, "LLM request canceled")
@@ -170,13 +187,12 @@ func (client *Client) Complete(ctx context.Context, request Request) (Response, 
 			// complete returns only sanitized errors, never raw transport/provider details.
 			var httpError *HTTPError
 			if errors.As(err, &httpError) {
-				logger = logger.With("status_code", httpError.StatusCode)
+				logger = logger.With("http_status", httpError.StatusCode)
 			}
-			var responseError *ResponseError
-			if errors.As(err, &responseError) {
+			if responseError != nil {
 				logger = logger.With("finish_reason", responseError.FinishReason, "tool_call_count", responseError.ToolCallCount)
 			}
-			logger.ErrorContext(ctx, "LLM request failed", "error", err)
+			logger.ErrorContext(ctx, "LLM request failed", "error", err, "error_category", errorCategory(err))
 		}
 		return response, err
 	}
@@ -306,4 +322,25 @@ func validToolChoice(value json.RawMessage) bool {
 func jsonObject(value []byte) bool {
 	value = bytes.TrimSpace(value)
 	return len(value) > 0 && value[0] == '{' && json.Valid(value)
+}
+
+func errorCategory(err error) string {
+	switch {
+	case errors.Is(err, ErrRateLimit):
+		return "rate_limit"
+	case errors.Is(err, ErrAuthentication):
+		return "authentication"
+	case errors.Is(err, ErrProvider), errors.Is(err, ErrHTTP):
+		return "api"
+	case errors.Is(err, ErrNetwork):
+		return "network"
+	case errors.Is(err, ErrToolCallCount):
+		return "invalid_tool_call"
+	case errors.Is(err, ErrInvalidResponse), errors.Is(err, ErrResponseTooLarge):
+		return "protocol"
+	case errors.Is(err, ErrInvalidRequest):
+		return "validation"
+	default:
+		return observability.Category(err)
+	}
 }

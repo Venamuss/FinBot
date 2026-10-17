@@ -64,5 +64,6 @@ func (input UpdateInput) Validate() (Changes, error) {
 	if len(fields) != 0 {
 		return Changes{}, fields
 	}
+
 	return changes, nil
 }

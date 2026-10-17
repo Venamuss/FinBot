@@ -1,6 +1,9 @@
 package config
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +12,12 @@ import (
 func resetEnvironment(t *testing.T) {
 	t.Helper()
 	t.Setenv("DATABASE_URL", "postgres://synthetic-db")
-	for _, name := range []string{"TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "TIME_ZONE", "HTTP_ADDR", "LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT"} {
+	for _, name := range []string{
+		"TELEGRAM_BOT_TOKEN", "TELEGRAM_ALLOWED_USER_IDS", "TIME_ZONE", "HTTP_ADDR",
+		"LLM_BASE_URL", "LLM_MODEL", "LLM_API_KEY", "LLM_TIMEOUT", "LOG_LEVEL",
+		"HTTP_REQUEST_TIMEOUT", "STARTUP_TIMEOUT", "TELEGRAM_HTTP_TIMEOUT",
+		"TELEGRAM_POLL_TIMEOUT", "TELEGRAM_RETRY_DELAY", "TELEGRAM_POLL_RETRY_DELAY",
+	} {
 		t.Setenv(name, "")
 	}
 }
@@ -122,5 +130,95 @@ func TestTelegramConfiguration(t *testing.T) {
 	t.Setenv("TIME_ZONE", "invalid/timezone")
 	if _, err := Load(); err == nil {
 		t.Fatal("invalid time zone accepted")
+	}
+}
+
+func TestOperationalDefaultsAndOverrides(t *testing.T) {
+	resetEnvironment(t)
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogLevel != slog.LevelInfo || cfg.HTTPRequestTimeout != 5*time.Second || cfg.StartupTimeout != 30*time.Second {
+		t.Fatal("incorrect HTTP/startup/log defaults")
+	}
+	if cfg.Telegram.Timeout != 40*time.Second || cfg.Telegram.PollTimeout != 25*time.Second || cfg.Telegram.RetryDelay != time.Second || cfg.TelegramPollRetryDelay != 5*time.Second {
+		t.Fatal("incorrect operational defaults")
+	}
+	t.Setenv("LOG_LEVEL", "debug")
+	t.Setenv("HTTP_REQUEST_TIMEOUT", "2s")
+	t.Setenv("STARTUP_TIMEOUT", "1m")
+	t.Setenv("TELEGRAM_HTTP_TIMEOUT", "15s")
+	t.Setenv("TELEGRAM_POLL_TIMEOUT", "10s")
+	t.Setenv("TELEGRAM_RETRY_DELAY", "500ms")
+	t.Setenv("TELEGRAM_POLL_RETRY_DELAY", "2s")
+	cfg, err = Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.LogLevel != slog.LevelDebug || cfg.HTTPRequestTimeout != 2*time.Second || cfg.StartupTimeout != time.Minute {
+		t.Fatal("HTTP/startup/log overrides ignored")
+	}
+	if cfg.Telegram.Timeout != 15*time.Second || cfg.Telegram.PollTimeout != 10*time.Second || cfg.Telegram.RetryDelay != 500*time.Millisecond || cfg.TelegramPollRetryDelay != 2*time.Second {
+		t.Fatal("operational overrides ignored")
+	}
+}
+
+func TestInvalidOperationalConfiguration(t *testing.T) {
+	cases := []struct{ name, value string }{
+		{"DATABASE_URL", "   "},
+		{"DATABASE_URL", "postgres://user:private-password@host:bad/db"},
+		{"DATABASE_URL", "postgres://host/db?pool_max_conns=private-value"},
+		{"HTTP_ADDR", ":0"},
+		{"HTTP_ADDR", ":+8080"},
+		{"TELEGRAM_RETRY_DELAY", "2000000h"},
+		{"HTTP_ADDR", ":65536"},
+		{"HTTP_ADDR", ":private-port"},
+		{"LOG_LEVEL", "private-level"},
+		{"LOG_LEVEL", "INFO+1"},
+		{"HTTP_REQUEST_TIMEOUT", "15s"},
+		{"TELEGRAM_POLL_TIMEOUT", "1ms"},
+		{"TELEGRAM_POLL_TIMEOUT", "51s"},
+		{"TELEGRAM_HTTP_TIMEOUT", "25s"},
+		{"TELEGRAM_BOT_TOKEN", "private-token/secret"},
+	}
+	for _, name := range []string{"HTTP_REQUEST_TIMEOUT", "STARTUP_TIMEOUT", "TELEGRAM_HTTP_TIMEOUT", "TELEGRAM_POLL_TIMEOUT", "TELEGRAM_RETRY_DELAY", "TELEGRAM_POLL_RETRY_DELAY"} {
+		for _, value := range []string{"private-duration", "0s", "-1s", "999999999999h"} {
+			cases = append(cases, struct{ name, value string }{name, value})
+		}
+	}
+	for _, test := range cases {
+		t.Run(test.name+"/"+test.value, func(t *testing.T) {
+			resetEnvironment(t)
+			t.Setenv(test.name, test.value)
+			_, err := Load()
+			if err == nil || !strings.Contains(err.Error(), test.name) || strings.Contains(err.Error(), "private-") {
+				t.Fatalf("missing safe variable-specific error: %v", err)
+			}
+		})
+	}
+}
+
+func TestLogLevelFiltering(t *testing.T) {
+	for _, test := range []struct {
+		level   slog.Level
+		visible int
+	}{{slog.LevelDebug, 4}, {slog.LevelInfo, 3}, {slog.LevelWarn, 2}, {slog.LevelError, 1}} {
+		t.Run(test.level.String(), func(t *testing.T) {
+			resetEnvironment(t)
+			t.Setenv("LOG_LEVEL", test.level.String())
+			cfg, err := Load()
+			if err != nil {
+				t.Fatal(err)
+			}
+			var output bytes.Buffer
+			logger := slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: cfg.LogLevel}))
+			for _, candidate := range []slog.Level{slog.LevelDebug, slog.LevelInfo, slog.LevelWarn, slog.LevelError} {
+				logger.Log(context.Background(), candidate, "test")
+			}
+			if got := strings.Count(output.String(), "\n"); got != test.visible {
+				t.Fatalf("incorrect number of visible levels: %d", got)
+			}
+		})
 	}
 }

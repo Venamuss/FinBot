@@ -21,6 +21,7 @@ type wireToolCall struct {
 type ResponseError struct {
 	FinishReason  string
 	ToolCallCount int
+	Usage         *Usage
 	cause         error
 }
 
@@ -34,6 +35,7 @@ func (err *ResponseError) Unwrap() error {
 
 func parseResponse(body []byte, requireExactlyOne bool) (response Response, err error) {
 	var envelope struct {
+		Usage   json.RawMessage `json:"usage"`
 		Error   json.RawMessage `json:"error"`
 		Choices []struct {
 			Message struct {
@@ -51,6 +53,7 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 	if len(envelope.Choices) != 1 || len(envelope.Error) != 0 {
 		return Response{}, ErrInvalidResponse
 	}
+	usage := parseUsage(envelope.Usage)
 	choice := envelope.Choices[0]
 
 	if choice.Message.Role != "assistant" {
@@ -76,10 +79,12 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 			err = &ResponseError{
 				FinishReason:  choice.FinishReason,
 				ToolCallCount: len(choice.Message.ToolCalls),
+				Usage:         usage,
 				cause:         err,
 			}
 		}
 	}()
+
 	if choice.Message.Content == nil && len(choice.Message.ToolCalls) == 0 && choice.FinishReason == "stop" {
 		return Response{}, ErrInvalidResponse
 	}
@@ -87,7 +92,9 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 	response = Response{
 		Content:      choice.Message.Content,
 		FinishReason: choice.FinishReason,
+		Usage:        usage,
 	}
+
 	seenIDs := make(map[string]bool)
 	for _, call := range choice.Message.ToolCalls {
 		if call.Type != "function" || strings.TrimSpace(call.ID) == "" || seenIDs[call.ID] {
@@ -110,5 +117,32 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 	if requireExactlyOne && len(response.ToolCalls) != 1 {
 		return Response{}, ErrToolCallCount
 	}
+
 	return response, nil
+}
+
+// Accounting metadata is optional. Ignore malformed/partial usage without
+// changing whether a completion or its tool calls are accepted.
+func parseUsage(raw json.RawMessage) *Usage {
+	var usage struct {
+		PromptTokens     *int64 `json:"prompt_tokens"`
+		CompletionTokens *int64 `json:"completion_tokens"`
+		TotalTokens      *int64 `json:"total_tokens"`
+	}
+
+	if json.Unmarshal(raw, &usage) != nil {
+		return nil
+	}
+	if usage.PromptTokens == nil || usage.CompletionTokens == nil || usage.TotalTokens == nil {
+		return nil
+	}
+	if *usage.PromptTokens < 0 || *usage.CompletionTokens < 0 || *usage.TotalTokens < 0 {
+		return nil
+	}
+
+	return &Usage{
+		PromptTokens:     *usage.PromptTokens,
+		CompletionTokens: *usage.CompletionTokens,
+		TotalTokens:      *usage.TotalTokens,
+	}
 }
