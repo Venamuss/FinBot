@@ -23,14 +23,17 @@ import (
 // Scripted HTTP APIs exercise the actual tool parser, Telegram adapter, owner
 // services and PostgreSQL transactions. They do not test model interpretation.
 type modificationWorkflow struct {
-	t         *testing.T
-	pool      *pgxpool.Pool
-	bot       *Bot
-	plan      llm.Response
-	calls     atomic.Int32
-	mutations atomic.Int32
-	replies   chan string
-	update    Update
+	t                *testing.T
+	pool             *pgxpool.Pool
+	bot              *Bot
+	plan             llm.Response
+	calls            atomic.Int32
+	mutations        atomic.Int32
+	replies          chan string
+	update           Update
+	modelStatus      atomic.Int32
+	modelTimeout     atomic.Bool
+	deliveryFailures atomic.Int32
 }
 
 func newModificationWorkflow(t *testing.T) *modificationWorkflow {
@@ -53,6 +56,17 @@ func newModificationWorkflow(t *testing.T) *modificationWorkflow {
 
 func (workflow *modificationWorkflow) complete(w http.ResponseWriter, r *http.Request) {
 	workflow.calls.Add(1)
+	if status := workflow.modelStatus.Load(); status != 0 {
+		w.WriteHeader(int(status))
+		return
+	}
+	if workflow.modelTimeout.Load() {
+		select {
+		case <-r.Context().Done():
+		case <-time.After(2 * time.Second):
+		}
+		return
+	}
 	var request llm.Request
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		workflow.t.Error(err)
@@ -87,6 +101,11 @@ func (workflow *modificationWorkflow) complete(w http.ResponseWriter, r *http.Re
 }
 
 func (workflow *modificationWorkflow) deliver(w http.ResponseWriter, r *http.Request) {
+	if workflow.deliveryFailures.Load() > 0 {
+		workflow.deliveryFailures.Add(-1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+		return
+	}
 	var request struct {
 		ChatID int64  `json:"chat_id"`
 		Text   string `json:"text"`
@@ -184,7 +203,10 @@ func TestNaturalLanguageModificationRegressionIntegration(t *testing.T) {
 			if _, err := workflow.pool.Exec(context.Background(), `INSERT INTO expenses(id,user_id,amount,category,spent_at,comment) OVERRIDING SYSTEM VALUE VALUES (15,101,350,'еда','2026-10-10','такси и кофе'), (16,202,900,'еда','2026-10-16','такси и кофе')`); err != nil {
 				t.Fatal(err)
 			}
-			if !strings.Contains(workflow.send(101, test.text, "delete_expense", test.args), "Расход удалён") || workflow.count(101) != 0 || workflow.count(202) != 1 {
+			if !strings.Contains(workflow.send(101, test.text, "delete_expense", test.args), "да или нет") || workflow.count(101) != 1 {
+				t.Fatal("unique deletion skipped confirmation")
+			}
+			if !strings.Contains(workflow.send(101, "да", "delete_expense", `{}`), "Расход удалён") || workflow.count(101) != 0 || workflow.count(202) != 1 {
 				t.Fatal("unique own expense was not deleted safely")
 			}
 		})
@@ -226,6 +248,7 @@ func TestModificationSelectionIsolationAndReplayIntegration(t *testing.T) {
 	}
 	workflow.send(101, "удали такси", "delete_expense", `{"query":"такси"}`)
 	workflow.send(101, "первая", "choose_expense", `{"choice":"1"}`)
+	workflow.send(101, "да", "delete_expense", `{}`)
 	if workflow.count(101) != 1 || workflow.item(1).Amount.String() != "700.00" {
 		t.Fatal("delete selection removed wrong record")
 	}
@@ -242,11 +265,15 @@ func TestModificationSelectionIsolationAndReplayIntegration(t *testing.T) {
 		if name == "update_expense" {
 			args = `{"id":"3","amount":"1"}`
 		}
-		reply := workflow.send(101, "чужой #3", name, args)
+		text := "удали чужой #3"
+		if name == "update_expense" {
+			text = "измени чужой #3 на 1"
+		}
+		reply := workflow.send(101, text, name, args)
 		if strings.Contains(reply, "950") || workflow.item(3).Amount.String() != "950.00" {
 			t.Fatal("foreign expense disclosed or changed")
 		}
-		missingID := workflow.send(101, "неизвестная трата", name, strings.ReplaceAll(args, `"3"`, `"999"`))
+		missingID := workflow.send(101, strings.ReplaceAll(text, "#3", "#999"), name, strings.ReplaceAll(args, `"3"`, `"999"`))
 		if strings.Contains(missingID, "Расход обновлён") || strings.Contains(missingID, "Расход удалён") {
 			t.Fatal("missing expense produced a success reply")
 		}
@@ -254,7 +281,11 @@ func TestModificationSelectionIsolationAndReplayIntegration(t *testing.T) {
 		if name == "update_expense" {
 			queryArgs = `{"query":"несуществующая трата","amount":"450","request_context":"new"}`
 		}
-		if reply := workflow.send(101, "несуществующая трата", name, queryArgs); reply != "Траты не найдены." {
+		text = "удали несуществующую трату"
+		if name == "update_expense" {
+			text = "измени несуществующую трату на 450"
+		}
+		if reply := workflow.send(101, text, name, queryArgs); reply != "Траты не найдены." {
 			t.Fatal("missing description was not handled gracefully")
 		}
 	}
@@ -268,6 +299,7 @@ func TestModificationSelectionIsolationAndReplayIntegration(t *testing.T) {
 	}
 	// An independent command can replace a pending confirmation without executing it.
 	workflow.send(101, "удали расход #1", "delete_expense", `{"id":"1","request_context":"new"}`)
+	workflow.send(101, "да", "delete_expense", `{}`)
 	if workflow.count(101) != 0 {
 		t.Fatal("pending confirmation blocked independent deletion")
 	}
@@ -299,7 +331,11 @@ func TestModificationMalformedCallsAndCommitFailureIntegration(t *testing.T) {
 			args = `{"amount":"450"}`
 		}
 		workflow.plan = llm.Response{FinishReason: "tool_calls", ToolCalls: []llm.ToolCall{{Name: name, Arguments: json.RawMessage(args)}}}
-		reply := workflow.process(101, "failing transaction", true)
+		text := "удали последнюю трату"
+		if name == "update_expense" {
+			text = "измени сумму на 450"
+		}
+		reply := workflow.process(101, text, true)
 		if strings.Contains(reply, "Расход обновлён") || strings.Contains(reply, "Расход удалён") || !reflect.DeepEqual(before, workflow.item(1)) {
 			t.Fatal("failed commit confirmed success or changed expense")
 		}
@@ -312,7 +348,8 @@ func TestModificationMalformedCallsAndCommitFailureIntegration(t *testing.T) {
 		t.Fatal("failed transaction poisoned focus")
 	}
 	workflow.send(101, "мои расходы", "list_expenses", `{}`)
-	if !strings.Contains(workflow.send(101, "удали кофе", "delete_expense", `{"query":"кофе"}`), "Расход удалён") {
+	workflow.send(101, "удали кофе", "delete_expense", `{"query":"кофе"}`)
+	if !strings.Contains(workflow.send(101, "да", "delete_expense", `{}`), "Расход удалён") {
 		t.Fatal("sequential deletion failed")
 	}
 	if strings.Contains(workflow.send(101, "мои расходы", "list_expenses", `{}`), "450 ₽") || workflow.count(101) != 0 {

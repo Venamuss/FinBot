@@ -120,11 +120,11 @@ func TestModificationDiagnosticsIdentifyFailureBoundaryWithoutContents(t *testin
 	})
 	orchestrator, model, _ := setup(t)
 	handle(t, orchestrator, model, 1, 101, "private-message 87654321", "create_expense", `{"amount":"87654321","spent_at":"today","comment":"private-comment"}`)
-	handle(t, orchestrator, model, 2, 101, "private-update", "update_expense", `{"amount":"87654322","comment":null}`)
+	handle(t, orchestrator, model, 2, 101, "измени сумму на 87654322 private-update", "update_expense", `{"amount":"87654322","comment":null}`)
 	handle(t, orchestrator, model, 3, 101, "private-invalid", "update_expense", `{"amount":87654322}`)
 	handle(t, orchestrator, model, 4, 101, "private-unknown", "private-tool", `{}`)
-	handle(t, orchestrator, model, 5, 101, "private-missing", "delete_expense", `{"query":"private-missing"}`)
-	handle(t, orchestrator, model, 6, 101, "private-invalid-id", "delete_expense", `{"id":"private-id"}`)
+	handle(t, orchestrator, model, 5, 101, "удали private-missing", "delete_expense", `{"query":"private-missing"}`)
+	handle(t, orchestrator, model, 6, 101, "удали private-invalid-id", "delete_expense", `{"id":"private-id"}`)
 	logs := output.String()
 	for _, secret := range []string{"private-", "87654321", "87654322", "pending_values", "pending_request"} {
 		if strings.Contains(logs, secret) {

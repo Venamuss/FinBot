@@ -190,6 +190,10 @@ func Deleted(item expense.Expense) string {
 	return confirmation("🗑", "Расход удалён", item, "")
 }
 
+func DeleteConfirmation(item expense.Expense) string {
+	return confirmation("🗑", "Удалить расход?", item, "Ответьте да или нет.")
+}
+
 func filterLabel(filter expense.OwnerFilter, period string) string {
 	label := "За всё время"
 	periods := map[string]string{

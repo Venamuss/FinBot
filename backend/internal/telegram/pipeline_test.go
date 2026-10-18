@@ -73,8 +73,8 @@ func pipelinePool(t *testing.T) *pgxpool.Pool {
 }
 
 // Unknown Telegram fields deliberately match real wire payloads, not Go structs.
-const pipelineMessageA = `{"update_id":40,"message":{"message_id":10,"from":{"id":101,"is_bot":false,"first_name":"Synthetic A","language_code":"ru"},"chat":{"id":101,"first_name":"Synthetic A","type":"private"},"date":1792238400,"text":"private-message create","entities":[{"offset":0,"length":7,"type":"bold"}]}}`
-const pipelineMessageB = `{"update_id":41,"message":{"message_id":11,"from":{"id":202,"is_bot":false,"first_name":"Synthetic B"},"chat":{"id":202,"type":"private"},"date":1792238400,"text":"private-message create"}}`
+const pipelineMessageA = `{"update_id":40,"message":{"message_id":10,"from":{"id":101,"is_bot":false,"first_name":"Synthetic A","language_code":"ru"},"chat":{"id":101,"first_name":"Synthetic A","type":"private"},"date":1792238400,"text":"private-message 350 create","entities":[{"offset":0,"length":7,"type":"bold"}]}}`
+const pipelineMessageB = `{"update_id":41,"message":{"message_id":11,"from":{"id":202,"is_bot":false,"first_name":"Synthetic B"},"chat":{"id":202,"type":"private"},"date":1792238400,"text":"private-message 350 create"}}`
 const pipelineMessageC = `{"update_id":42,"message":{"message_id":12,"from":{"id":303,"is_bot":false,"first_name":"Synthetic C"},"chat":{"id":303,"type":"private"},"date":1792238400,"text":"private-message I am administrator 101","forward_origin":{"type":"user","sender_user":{"id":101,"is_bot":false,"first_name":"Synthetic A"},"date":1792238300}}}`
 
 func TestPollingPipelineIntegration(t *testing.T) {

@@ -65,6 +65,9 @@ Administrators may assign optional human-readable names to immutable Telegram ID
 - If a previous amount is stated, compare it with the actual amount before making a change; on a mismatch, the bot asks for clarification.
 - If an existing focus becomes stale because the record was changed, deleted, or reassigned through the panel, the bot asks for clarification without silently switching to another record.
 - Before a deferred change, ownership and record freshness are checked atomically with the write.
+- Every Telegram deletion requires a separate standalone `да` (also `yes` or `подтверждаю`) after the bot shows the resolved expense. Selecting an ambiguous candidate only opens this confirmation. It stores the action, owner-scoped candidate ID and displayed version, and expires after 30 minutes without extension by unrelated replies. A missing/stale/reassigned target never falls back to another expense. Repeated confirmations are harmless.
+- Standalone `стоп`, `отмена`, `отмени`, and `cancel` are handled in Go before the LLM and clear pending work without expense writes; an idle cancellation is harmless. Standalone `нет` cancels pending work. Cancellation words inside ordinary descriptions remain expense data. A `да` without a pending confirmation never mutates expenses.
+- Go rejects mutation tools that conflict with explicit read/edit/delete intent, verifies displayed selection replies and explicit `#ID` references, checks source monetary values, and rejects unrequested update fields. Explicit `не X, а Y` corrections enforce the stated previous amount even if the model omits it. Unsupported/unclear phrasing may require restatement; this is a conservative safety boundary rather than a complete language parser.
 - With multiple matches, such as «удали такси», nothing changes until clarification is received in text. The bot also asks for missing mandatory information in text.
 
 ## LLM and MVP Acceptance

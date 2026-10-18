@@ -255,7 +255,13 @@ func TestConversationOwnershipAndStalePanelIntegration(t *testing.T) {
 			run := func(id, owner int64, name, args string) string {
 				t.Helper()
 				model.name, model.args = name, args
-				response, err := orchestrator.Handle(ctx, id, owner, "synthetic request", time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC))
+				texts := map[string]string{
+					"create_expense": "такси 350",
+					"delete_expense": "удали такси",
+					"update_expense": "измени #3 на 1",
+					"choose_expense": "2",
+				}
+				response, err := orchestrator.Handle(ctx, id, owner, texts[name], time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC))
 				if err != nil {
 					t.Fatal(err)
 				}

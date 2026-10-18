@@ -183,10 +183,10 @@ func TestListingOptionalDateAndFilters(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			orchestrator, model, store := setup(t)
-			handle(t, orchestrator, model, 1, 101, "synthetic", "create_expense", `{"amount":"350","category":"еда","spent_at":"today","comment":"кофе"}`)
-			handle(t, orchestrator, model, 2, 101, "synthetic", "create_expense", `{"amount":"200","category":"транспорт","spent_at":"today"}`)
-			handle(t, orchestrator, model, 3, 101, "synthetic", "create_expense", `{"amount":"100","category":"еда","spent_at":"yesterday"}`)
-			handle(t, orchestrator, model, 4, 202, "synthetic", "create_expense", `{"amount":"900","category":"покупки","spent_at":"today","comment":"private-owner-B"}`)
+			handle(t, orchestrator, model, 1, 101, "кофе 350", "create_expense", `{"amount":"350","category":"еда","spent_at":"today","comment":"кофе"}`)
+			handle(t, orchestrator, model, 2, 101, "транспорт 200", "create_expense", `{"amount":"200","category":"транспорт","spent_at":"today"}`)
+			handle(t, orchestrator, model, 3, 101, "еда 100", "create_expense", `{"amount":"100","category":"еда","spent_at":"yesterday"}`)
+			handle(t, orchestrator, model, 4, 202, "покупки 900", "create_expense", `{"amount":"900","category":"покупки","spent_at":"today","comment":"private-owner-B"}`)
 			reply := handle(t, orchestrator, model, 5, 101, test.text, test.tool, test.args)
 			if !strings.HasPrefix(plainReply(reply), test.want) || strings.Contains(reply, "private-owner-B") || len(store.repo.items) != 4 {
 				t.Fatalf("unexpected listing: %s", reply)

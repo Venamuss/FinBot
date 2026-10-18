@@ -84,6 +84,9 @@ func TestExpenseDescriptionPersistenceIntegration(t *testing.T) {
 	if _, err := orchestrator.Handle(ctx, 101, 101, "удали последнюю", reference); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := orchestrator.Handle(ctx, 103, 101, "да", reference); err != nil {
+		t.Fatal(err)
+	}
 	var exists bool
 	if err := pool.QueryRow(ctx, `SELECT EXISTS(SELECT 1 FROM expenses WHERE id = $1)`, lastID).Scan(&exists); err != nil || exists {
 		t.Fatal("deletion failed")
@@ -100,5 +103,5 @@ func TestExpenseDescriptionPersistenceIntegration(t *testing.T) {
 	if err != nil || reply != conversation.Denied || model.calls != calls {
 		t.Fatal("denied C accessed the model or B's stored response")
 	}
-	assertCounts(t, pool, 9, 11)
+	assertCounts(t, pool, 9, 12)
 }

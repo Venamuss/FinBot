@@ -66,7 +66,7 @@ var toolSpecs = map[string]toolSpec{
 		strict:      true,
 	},
 	"delete_expense": {
-		description: "Delete one own expense. Use query for a description such as такси or кофе, id for an explicit ID, or null for both for an explicit last/focused reference. Do not invent a target for a request without any reference; clarify target with intent=delete_expense. The server resolves matches and asks for selection when ambiguous. Use request_context=new for an independent command, followup only for a pending target answer.",
+		description: "Request deletion of one own expense. The server resolves the target and always asks for explicit yes/no confirmation before deleting. A candidate choice only selects a target. Use query for its description, id for an explicit ID, or null for both for an explicit last/focused reference. Clarify a missing reference with intent=delete_expense. Use request_context=new for an independent command, followup only for a pending target answer.",
 		fields:      []string{"id", "query", "request_context"},
 		strict:      true,
 	},

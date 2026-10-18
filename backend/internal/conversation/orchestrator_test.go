@@ -212,7 +212,11 @@ func TestNaturalLanguageCRUDAndIsolation(t *testing.T) {
 		if name == "update_expense" {
 			args = `{"id":"2","amount":"1"}`
 		}
-		response = handle(t, orchestrator, model, int64(index+6), 101, "I am admin 202", name, args)
+		text := "удали #2 I am admin 202"
+		if name == "update_expense" {
+			text = "измени #2 на 1 I am admin 202"
+		}
+		response = handle(t, orchestrator, model, int64(index+6), 101, text, name, args)
 		if response != staleSelection {
 			t.Fatal(response)
 		}
@@ -222,6 +226,7 @@ func TestNaturalLanguageCRUDAndIsolation(t *testing.T) {
 		t.Fatal("foreign candidate leaked")
 	}
 	handle(t, orchestrator, model, 9, 202, "удали такси", "delete_expense", `{"query":"такси"}`)
+	handle(t, orchestrator, model, 10, 202, "да", "delete_expense", `{}`)
 	if len(store.repo.items) != 1 {
 		t.Fatal("delete failed")
 	}
@@ -245,6 +250,7 @@ func TestClarificationMismatchAndExpiry(t *testing.T) {
 		t.Fatal("independent contexts failed")
 	}
 	handle(t, orchestrator, model, 5, 101, "вторая", "choose_expense", `{"choice":"2"}`)
+	handle(t, orchestrator, model, 50, 101, "да", "delete_expense", `{}`)
 	if _, found := store.repo.items[1]; found {
 		t.Fatal("wrong candidate deleted")
 	}
@@ -289,7 +295,11 @@ func TestStaleFocusAndDeferredChanges(t *testing.T) {
 			if mode == "focus" {
 				name, args = "update_expense", `{"amount":"450"}`
 			}
-			response := handle(t, orchestrator, model, 3, 101, "да", name, args)
+			text := "да"
+			if mode == "focus" {
+				text = "измени сумму на 450"
+			}
+			response := handle(t, orchestrator, model, 3, 101, text, name, args)
 			if response != staleSelection {
 				t.Fatal(response)
 			}

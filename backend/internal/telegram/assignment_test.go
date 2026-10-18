@@ -164,6 +164,9 @@ func TestAssignmentWorkflowIntegration(t *testing.T) {
 	if !strings.Contains(send(101, "удали последнюю трату"), "475 ₽") {
 		t.Fatal("Telegram did not delete the focused expense")
 	}
+	if !strings.Contains(send(101, "да"), "Расход удалён") {
+		t.Fatal("confirmed deletion failed")
+	}
 	afterDelete, err := repo.List(ctx, filter)
 	if err != nil || afterDelete.Total != 3 {
 		t.Fatal("incorrect remaining expense count", err)

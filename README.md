@@ -151,6 +151,8 @@ docker compose down
 | Исправить выбранную трату | `последнее было не 350, а 450` |
 | Удалить расход | `удали последнюю трату`, `удали такси` |
 
+Перед удалением бот показывает выбранный расход и просит ответить `да` или `нет`. Выбор из нескольких вариантов ещё не удаляет запись. Подтверждение действует 30 минут; изменение записи в панели требует нового выбора. `стоп`, `отмена`, `отмени`, `cancel` отменяют ожидающее действие без изменения расходов; повторная отмена и `да` без подтверждения безопасны. Слова отмены внутри описания, например `купил стоп-сигнал за 500`, остаются частью расхода.
+
 При просмотре расходов без указания периода, например «мои расходы», показываются расходы за всё время. При создании расхода и подсчёте суммы без указания даты используется сегодняшний день в `TIME_ZONE` относительно времени исходного сообщения Telegram. «За неделю» включает сегодня и шесть предыдущих дней; «на этой неделе» — период с понедельника. После интерпретации моделью относительные даты вычисляет сервер.
 
 Текущая выбранная в диалоге трата имеет приоритет над последней созданной записью. Если выбранной траты нет, «последняя» определяется по `created_at DESC, id DESC`, независимо от даты покупки. Несовпадение предыдущей суммы или несколько подходящих записей вызывают уточнение: ответьте предложенным номером либо отмените выбор текстом. После изменения через панель устаревшую выбранную трату нужно выбрать заново. Контекст выбора истекает через 30 минут и теряется при перезапуске.
@@ -422,6 +424,8 @@ Send private text messages to the bot from an allowed account:
 | Monthly food total | `сколько я потратил на еду в этом месяце` |
 | Correct a selected expense | `последнее было не 350, а 450` |
 | Delete | `удали последнюю трату`, `удали такси` |
+
+Before deletion, the bot shows the resolved expense and asks for `да` or `нет`. Selecting an ambiguous candidate still requires confirmation. Confirmation expires after 30 minutes; a panel change requires reselection. Standalone `стоп`, `отмена`, `отмени`, and `cancel` cancel pending work without changing expenses. Repeated cancellation and an affirmative without a pending confirmation are harmless. Cancellation words inside descriptions remain expense data.
 
 Listing without a period, for example “мои расходы”, shows expenses across all dates. Creation and totals without a date default to today in `TIME_ZONE`, using the original Telegram message timestamp. “За неделю” includes today and the previous six days; “на этой неделе” starts on Monday. Relative dates are resolved by the server after model interpretation.
 

@@ -39,7 +39,8 @@ For an explicit #ID use id as a decimal string without #. Never ask for an ID
 merely because a description may match several records; the server resolves it.
 Only supply requested changes; do not copy focus values or invent a new date,
 category or comment. Update null fields mean unchanged; comment="" explicitly
-clears a comment. Deletion of a unique match needs no additional confirmation.
+clears a comment. Every deletion requires a separate explicit yes/no confirmation
+of the resolved expense. A selection only chooses the target; it never deletes.
 Use clarify(field="target", intent="update_expense"/"delete_expense") when the
 reference itself is missing. A pending target reply uses the original intent
 and request_context="followup"; preserve the pending changes.
@@ -142,6 +143,7 @@ type pending struct {
 	text       string
 	reference  time.Time
 	field      string
+	expiresAt  time.Time
 }
 
 type state struct {
@@ -222,15 +224,16 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 	}
 
 	current := orchestrator.states[owner]
+	if current.pending != nil && !current.pending.expiresAt.IsZero() && !now.Before(current.pending.expiresAt) {
+		current.pending = nil
+	}
 	observability.Logger(ctx, "conversation", "load_state").DebugContext(ctx, "Conversation state loaded", "state_type", current.stateType())
-	current.touched = now
-	orchestrator.states[owner] = current
 
 	// Cancellation is a control command, never a model-selected expense action.
 	// It uses the same commit/replay boundary as all other conversation changes.
-	operation := action{name: "cancel_request"}
-	if explicitCancellation(text) {
-		observability.Logger(ctx, "conversation", "route_action").InfoContext(ctx, "Cancellation command recognized", "state_type", current.stateType(), "tool", operation.name)
+	operation, control := controlAction(text, current)
+	if control {
+		observability.Logger(ctx, "conversation", "route_action").InfoContext(ctx, "Conversation control recognized", "state_type", current.stateType(), "tool", operation.name)
 	} else {
 		planned, err := orchestrator.model.Complete(ctx, orchestrator.request(text, reference, current))
 		if err != nil {
@@ -271,9 +274,15 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 		// Each transaction retry starts from the same pre-message state.
 		next = current
 		next.touched = now
+		if next.pending != nil && !next.pending.expiresAt.IsZero() && !orchestrator.now().Before(next.pending.expiresAt) {
+			next.pending = nil
+		}
 		reply, err := orchestrator.execute(transactionCtx, repo, owner, operation, text, reference, &next)
 		if err != nil {
 			return "", err
+		}
+		if next.pending != nil && next.pending != current.pending && next.pending.expiresAt.IsZero() {
+			next.pending.expiresAt = now.Add(30 * time.Minute)
 		}
 		return htmlReplyPrefix + reply, nil
 	})

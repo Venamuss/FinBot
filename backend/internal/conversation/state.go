@@ -20,7 +20,7 @@ var clarificationQuestions = map[string]string{
 }
 
 func (current *pending) selecting() bool {
-	return current != nil && (current.field == "selection" || current.field == "confirmation")
+	return current != nil && contains([]string{"selection", "confirmation", "delete_confirmation"}, current.field)
 }
 
 func (current state) stateType() string {
@@ -41,6 +41,9 @@ func pendingQuestion(current *pending) string {
 		return "Нет ожидающего уточнения. Укажите действие и данные траты."
 	}
 	if current.selecting() {
+		if current.field == "delete_confirmation" {
+			return "Подтвердите удаление: ответьте да или нет."
+		}
 		return "Сначала завершите выбор: ответьте номером предложенной траты или отмените действие."
 	}
 	return clarificationQuestions[current.field]
@@ -52,7 +55,7 @@ func toolsForState(current state) []llm.Tool {
 	for _, definition := range definitions {
 		switch definition.Function.Name {
 		case "choose_expense":
-			if !current.pending.selecting() {
+			if !current.pending.selecting() || current.pending.field == "delete_confirmation" {
 				continue
 			}
 		case "answer_clarification":
@@ -213,6 +216,12 @@ func (orchestrator *Orchestrator) answer(ctx context.Context, operation action, 
 		return action{}, reference, rejectStateTool(ctx, next, "answer_clarification"), nil
 	}
 	draft := copyAction(current.action)
+	if current.field == "amount" {
+		amount, err := expense.ParseAmount(operation.value("value"))
+		if err == nil && !containsPrice(text, amount) {
+			return action{}, reference, rejectStateTool(ctx, next, "answer_clarification"), nil
+		}
+	}
 	draft.args[current.field] = operation.args["value"]
 	if operation.args["amount"] != nil {
 		draft.args["amount"] = operation.args["amount"]

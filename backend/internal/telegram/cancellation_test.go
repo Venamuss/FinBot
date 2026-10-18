@@ -87,7 +87,8 @@ func TestCancellationIdleAndAfterDeletionIntegration(t *testing.T) {
 				t.Fatal("synthetic expenses were not created")
 			}
 			if afterDeletion {
-				reply := workflow.send(101, "удали последнюю трату", "delete_expense", `{}`)
+				workflow.send(101, "удали последнюю трату", "delete_expense", `{}`)
+				reply := workflow.send(101, "да", "delete_expense", `{}`)
 				if !strings.Contains(reply, "Расход удалён") || workflow.count(101) != 3 {
 					t.Fatal("explicit deletion failed")
 				}
@@ -174,6 +175,7 @@ func TestCancellationUserIsolationAndReplayIntegration(t *testing.T) {
 	workflow.update = currentUpdate
 	cancelWithoutMutation(t, workflow, 303, "стоп", Denied, "delete_expense", `{}`)
 	workflow.send(202, "первая", "choose_expense", `{"choice":"1"}`)
+	workflow.send(202, "да", "delete_expense", `{}`)
 	if workflow.count(202) != 1 || workflow.count(101) != 2 {
 		t.Fatal("cancellation affected another user's deletion workflow")
 	}
@@ -237,8 +239,9 @@ func TestCancellationCommitFailureIntegration(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The cancellation callback ran, but its failed commit must leave the original
-	// selection available. Only this explicit selection may now delete a record.
-	reply = workflow.send(101, "первая", "choose_expense", `{"choice":"1"}`)
+	// selection available. Selection must still be followed by confirmation.
+	workflow.send(101, "первая", "choose_expense", `{"choice":"1"}`)
+	reply = workflow.send(101, "да", "delete_expense", `{}`)
 	if !strings.Contains(reply, "Расход удалён") || workflow.count(101) != 1 || workflow.mutations.Load() != mutations+1 {
 		t.Fatal("failed cancellation commit discarded the pending deletion")
 	}

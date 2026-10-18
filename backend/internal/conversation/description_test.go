@@ -90,7 +90,11 @@ func TestUnsafeDescriptionSeparationNeedsClarification(t *testing.T) {
 				t.Fatal(err)
 			}
 			reply := handle(t, orchestrator, model, 1, 101, test.text, "create_expense", string(encoded))
-			if reply != clarificationQuestions["request"] || len(store.repo.items) != 0 || orchestrator.states[101].pending.field != "request" {
+			field := "request"
+			if test.text == "кофе 200 или 300" {
+				field = "amount"
+			}
+			if reply != clarificationQuestions[field] || len(store.repo.items) != 0 || orchestrator.states[101].pending.field != field {
 				t.Fatal("unverified price fragment changed expenses")
 			}
 		})
@@ -147,6 +151,7 @@ func TestPriceFragmentPreservesCurrencyValidationAndCommentEdits(t *testing.T) {
 		t.Fatal("explicit comment edit was rewritten")
 	}
 	handle(t, orchestrator, model, 4, 101, "удали последнюю", "delete_expense", `{}`)
+	handle(t, orchestrator, model, 5, 101, "да", "delete_expense", `{}`)
 	if len(store.repo.items) != 0 {
 		t.Fatal("deletion regressed")
 	}

@@ -18,8 +18,16 @@ func TestNullableModificationArguments(t *testing.T) {
 			orchestrator, model, store := setup(t)
 			handle(t, orchestrator, model, 1, 101, "такси 350", "create_expense", `{"amount":"350","category":"транспорт","spent_at":"yesterday","comment":"такси"}`)
 			before := store.repo.items[1]
-			reply := handle(t, orchestrator, model, 2, 101, "synthetic modification", test.name, test.args)
+			text := "измени сумму на 450"
 			if test.name == "delete_expense" {
+				text = "удали такси"
+			}
+			reply := handle(t, orchestrator, model, 2, 101, text, test.name, test.args)
+			if test.name == "delete_expense" {
+				if len(store.repo.items) != 1 || !strings.Contains(reply, "да или нет") {
+					t.Fatal("delete skipped confirmation")
+				}
+				reply = handle(t, orchestrator, model, 3, 101, "да", "delete_expense", `{}`)
 				if len(store.repo.items) != 0 || !strings.Contains(reply, "Расход удалён") {
 					t.Fatal("nullable delete was rejected")
 				}
@@ -97,7 +105,14 @@ func TestIndependentModificationsReplacePendingStates(t *testing.T) {
 				if name == "update_expense" {
 					args = `{"id":"1","amount":"700","request_context":"new"}`
 				}
-				handle(t, orchestrator, model, 4, 101, "independent command", name, args)
+				text := "измени расход #1 на 700"
+				if name == "delete_expense" {
+					text = "удали расход #1"
+				}
+				handle(t, orchestrator, model, 4, 101, text, name, args)
+				if name == "delete_expense" {
+					handle(t, orchestrator, model, 5, 101, "да", name, `{}`)
+				}
 				if orchestrator.states[101].pending != nil || store.repo.items[2].Amount.String() != "350.00" {
 					t.Fatal("independent command kept a stale request or changed wrong expense")
 				}
@@ -122,12 +137,19 @@ func TestTargetClarificationRetainsModification(t *testing.T) {
 			if name == "update_expense" {
 				args = `{"field":"target","intent":"update_expense","query":"старое описание","amount":"450"}`
 			}
-			handle(t, orchestrator, model, 2, 101, "уточняемый запрос", "clarify", args)
+			text := "удали трату"
+			if name == "update_expense" {
+				text = "измени сумму на 450"
+			}
+			handle(t, orchestrator, model, 2, 101, text, "clarify", args)
 			answer := `{"id":"1","request_context":"followup"}`
 			if name == "update_expense" {
 				answer = `{"id":"1","category":"жильё","amount":"999","request_context":"followup"}`
 			}
 			reply := handle(t, orchestrator, model, 3, 101, "кофе", name, answer)
+			if name == "delete_expense" {
+				reply = handle(t, orchestrator, model, 4, 101, "да", name, `{}`)
+			}
 			if reply == invalidRequest || orchestrator.states[101].pending != nil {
 				t.Fatal("target answer was rejected")
 			}
@@ -153,6 +175,7 @@ func TestLatestModificationUsesCreationOrderAndOwner(t *testing.T) {
 	}
 	delete(orchestrator.states, 101)
 	handle(t, orchestrator, model, 5, 101, "убери последнюю запись", "delete_expense", `{}`)
+	handle(t, orchestrator, model, 6, 101, "да", "delete_expense", `{}`)
 	if _, found := store.repo.items[2]; found || len(store.repo.items) != 2 {
 		t.Fatal("latest deletion used wrong order or owner")
 	}

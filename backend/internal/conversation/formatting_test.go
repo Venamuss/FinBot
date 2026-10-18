@@ -16,7 +16,7 @@ import (
 func TestHTMLRepliesAndLegacyReplay(t *testing.T) {
 	orchestrator, model, store := setup(t)
 	const text = `кофе </b><script>😀 & чай</script>`
-	created := handle(t, orchestrator, model, 1, 101, "synthetic", "create_expense", `{"amount":"6000.01","category":"еда","spent_at":"today","comment":"кофе </b><script>😀 & чай</script>"}`)
+	created := handle(t, orchestrator, model, 1, 101, text+" 6000,01", "create_expense", `{"amount":"6000.01","category":"еда","spent_at":"today","comment":"кофе </b><script>😀 & чай</script>"}`)
 	if !strings.Contains(created, html.EscapeString(text)) || !strings.Contains(created, "6 000,01 ₽") || strings.Contains(created, "<script>") {
 		t.Fatal(created)
 	}
@@ -105,7 +105,11 @@ func TestInvalidAmountReplies(t *testing.T) {
 		{"update_expense", `{"amount":"0"}`},
 		{"update_expense", `{"amount":"450","previous_amount":"-1"}`},
 	} {
-		reply := handle(t, orchestrator, model, int64(index+1), 101, "synthetic", operation.name, operation.args)
+		text := "измени сумму на 450"
+		if operation.name == "create_expense" {
+			text = "кофе 1.001"
+		}
+		reply := handle(t, orchestrator, model, int64(index+1), 101, text, operation.name, operation.args)
 		if reply != botresponse.InvalidAmount || len(store.repo.items) != 1 || store.repo.items[1].Amount != 100 {
 			t.Fatal("invalid amount changed data or gave an unclear response:", reply)
 		}
@@ -133,7 +137,11 @@ func TestFailedModificationsNeverReturnConfirmation(t *testing.T) {
 		{name: "delete_expense"},
 		{name: "update_expense", args: map[string]*string{"amount": &amount}},
 	} {
-		reply, err := orchestrator.applyModification(context.Background(), service, 101, operation, time.Now(), store.repo.items[1], &state{})
+		next := state{}
+		reply, err := orchestrator.applyModification(context.Background(), service, 101, operation, time.Now(), store.repo.items[1], &next)
+		if operation.name == "delete_expense" {
+			reply, err = orchestrator.confirmDelete(context.Background(), service, 101, "да", &next)
+		}
 		if err == nil || reply != "" || len(store.repo.items) != 1 {
 			t.Fatal("database failure returned success")
 		}

@@ -788,3 +788,76 @@ Mandatory verification for this increment:
 Environment notes: Docker, loopback mock APIs and PostgreSQL tests ran with approved access outside the sandbox. A later sandboxed `go vet` repeat could not access a Go build-cache file; rerunning with approved cache access passed. No checks are reported as passed on the basis of those failed attempts.
 
 Optional/not executed: live LLM language interpretation and real Telegram manual acceptance. The model output in automated tests is scripted; cancellation correctness no longer depends on it. The existing development database and deleted user data were untouched, and no recovery was attempted. The running development installation was not replaced; applying the fix there requires rebuilding/recreating its application service. Previously committed Telegram results retain their existing replay semantics.
+
+## Telegram Agent Reliability and Safety Audit — 18.10.2026
+
+Completed the requested audit and targeted fixes within the existing architecture.
+The lifecycle trace, findings recorded before fixes, safety boundaries, changed
+file inventory, scenario-to-test mapping, remaining limits and manual acceptance
+checklist are in [telegram-safety-audit.md](telegram-safety-audit.md).
+
+Confirmed defects: immediate deletion of unique/selected candidates; mutation
+tools and mutation clarification intents accepted for explicit read requests;
+model choices accepted without matching user selection text; missing monetary
+source verification; pending deadlines extended by activity; model substitution
+of explicit IDs; independent commands trapped by an omitted model context flag;
+implicit focus for a missing deletion reference; model selection of an explicitly
+ambiguous amount or a quantity instead of a marked price; and omitted/swapped
+previous/new amounts bypassing correction safeguards. Targeted regressions
+reproduced these before their corresponding fixes. Existing deterministic
+cancellation, ownership/version SQL, backward-pagination history, RUB defaults,
+description separation and transaction/delivery idempotency protections were
+verified and retained.
+
+Deletion now requires a separate Go-routed affirmative bound to one candidate's
+ID/version, after ambiguity resolution. No/stop cancel without expense changes.
+Pending decisions expire after a fixed 30 minutes, checked again after planning.
+Explicit mutation intent, source prices/IDs/corrections, requested update fields
+and displayed selection text are validated in Go. Complete independent commands
+supersede obsolete pending work. Activity/state publication occurs after commit.
+No schema, dependencies, provider/model, REST contract or frontend source changed.
+No commits were created.
+
+Added 23 top-level regression tests (plus table cases) in conversation and
+Telegram `safety_test.go` files. Real PostgreSQL sequences cover A–G alongside
+the retained cancellation, amount/description, pagination, authorization and
+transaction tests. Tests compare expense counts/amounts, unchanged fields and
+full database snapshots, and count model/mutation calls. Deferred PostgreSQL
+constraint failures occur after the DELETE callback, proving rollback and
+confirmation-state recovery; failed delivery retries prove stored-result replay.
+Panel amount/comment/owner changes and deletion invalidate pending confirmations.
+
+Mandatory automated verification for this audit:
+
+| Command/check actually executed | Final result |
+|---|---|
+| `go test ./...` from `backend/` (baseline) | Passed with loopback access; database cases skipped because no test DSN was supplied for this baseline |
+| `go test -race -json ./... -count=1 -timeout=180s` from `backend/`, with `TEST_DATABASE_URL` pointing only to disposable PostgreSQL 17 at `127.0.0.1:18716` | **Passed: 1,043 tests/subtests, zero failed or skipped test cases.** The migrations package has no test files. Includes A/B allowed, C denied, unit, HTTP mock, real SQL integration, transaction and race checks |
+| `go vet ./...` from `backend/` | Passed on final source |
+| `go test -race ./internal/conversation -run '^TestAudit' -count=1` | Passed after expanding the final test clock functions for readability; production code unchanged since the full run |
+| `gofmt -w` on all changed Go files; `gofmt -l backend`; `git diff --check` | Passed; final formatting listing empty. Final tracked and new-file diff/functions reviewed for readability, architecture, error handling, owner/version safety and transaction effects |
+| `npm test` from `frontend/` | Passed: 55 tests in four files |
+| `npm run build` from `frontend/` | Passed: TypeScript checking and Vite production build |
+| `docker build --network host -t finbot-audit-app:check .` | Passed on final audited backend source |
+| `docker compose --env-file /tmp/finbot-audit.env -p finbot-audit-check -f compose.yaml -f /tmp/finbot-audit-compose.yaml config --quiet` | Passed with synthetic settings, empty bot credentials/allowlist/key, and unreachable test LLM endpoint |
+| Same Compose invocation with `up -d --no-build --wait` and `ps --format json` | Passed: app, db and frontend running/healthy. Separate project/volume, HTTP `18715`, DB `18717`, cached unchanged frontend image |
+| `python3 scripts/smoke.py --url http://127.0.0.1:18715` | Passed against final audit image: CRUD, member names/ownership, partial updates/reassignment, filters, sorting, pagination and errors |
+
+The actual Compose commands also explicitly set the same synthetic variables in
+their process environment so ambient development credentials could not win over
+the test env file. Test setup and overrides stayed in `/tmp`. Docker and socket
+tests required approved execution outside the filesystem/network sandbox. An
+initial sandbox baseline failed to open loopback listeners; a later sandbox run
+could not write the Go build cache. Corrected executions above passed. Failed
+intermediate regression runs also caught a comma-boundary mistake introduced
+during correction validation; it was fixed before the final complete run.
+
+Optional/manual checks not executed: real Telegram A/B/C acceptance, live paid
+OpenRouter interpretation and a live local LLM. They remain separate from the
+automated audit verdict; mocked completions do not establish model language
+understanding. Existing MVP manual-acceptance status is unchanged. No paid APIs,
+development database resets or production redeployment were performed.
+
+Cleanup completed: removed only `finbot-audit-check` containers/network/test
+volume and the standalone `finbot-audit-test-db` container. The three existing
+`finbot-app-1`, `finbot-frontend-1`, and `finbot-db-1` services remained running.

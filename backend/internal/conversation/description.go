@@ -18,6 +18,7 @@ const pricePattern = `(?i)(?:за\s+)?(?:₽\s*)?([0-9]+(?:[.,][0-9]+)?)(?:\s*(?
 
 var exactPrice = regexp.MustCompile(`^` + pricePattern + `$`)
 var commentPrices = regexp.MustCompile(pricePattern)
+var alternativePrices = regexp.MustCompile(pricePattern + `\s+(?:или|либо|or)\s+` + pricePattern)
 
 func creationComment(operation action, source string) (*string, error) {
 	amount, err := expense.ParseAmount(operation.value("amount"))
@@ -29,7 +30,7 @@ func creationComment(operation action, source string) (*string, error) {
 	if expression == "" {
 		// Compatible endpoints may omit the optional source fragment. Accept a
 		// clean comment, but never silently persist an apparent duplicated price.
-		if comment != nil && containsPrice(*comment, amount) {
+		if !containsPrice(source, amount) || (comment != nil && containsPrice(*comment, amount)) {
 			return nil, errDescription
 		}
 		return comment, nil
@@ -73,6 +74,34 @@ func creationComment(operation action, source string) (*string, error) {
 		return nil, nil
 	}
 	return &cleaned, nil
+}
+
+// Reject a proposed value that is one of explicit price alternatives. Other
+// numbers remain descriptions/quantities; this does not pick a price for the model.
+func ambiguousPrice(source string, amount expense.Amount) bool {
+	for _, alternatives := range alternativePrices.FindAllStringSubmatch(source, -1) {
+		for _, value := range alternatives[1:] {
+			parsed, err := expense.ParseAmount(strings.ReplaceAll(value, ",", "."))
+			if err == nil && parsed == amount {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func matchesMarkedPrice(source string, amount expense.Amount) bool {
+	for _, match := range priceMatches(source) {
+		if !strings.HasPrefix(strings.ToLower(source[match[0]:match[1]]), "за") {
+			continue
+		}
+		value := strings.ReplaceAll(source[match[2]:match[3]], ",", ".")
+		marked, err := expense.ParseAmount(value)
+		if err != nil || marked != amount {
+			return false
+		}
+	}
+	return true
 }
 
 func completePriceExpression(source, expression string) bool {
