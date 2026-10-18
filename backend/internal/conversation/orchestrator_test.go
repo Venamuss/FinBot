@@ -107,6 +107,9 @@ func (repo *memoryRepository) ListOwned(_ context.Context, owner int64, filter e
 		items = append(items, item)
 	}
 	sort.Slice(items, func(i, j int) bool {
+		if items[i].SpentAt != items[j].SpentAt {
+			return items[i].SpentAt > items[j].SpentAt
+		}
 		return items[i].ID > items[j].ID
 	})
 	total := len(items)
@@ -393,7 +396,12 @@ func TestReplyLengthAndUnverifiedModelContent(t *testing.T) {
 	}
 	// Telegram's limit is 4096 UTF-16 units; astral runes occupy two units.
 	units := 0
-	for _, char := range formatPage(expense.Page{Items: items, Total: 9999999999}) {
+	filter := expense.OwnerFilter{DateFrom: "9999-12-01", DateTo: "9999-12-31", Category: expense.CategoryEntertainment, Query: comment}
+	reply, shown := formatPage(expense.Page{Items: items, Total: 9999999999}, filter, "this_month", 0)
+	if shown == 0 || shown >= len(items) || len(listingIDs(t, reply)) != shown || !strings.Contains(reply, "ещё") {
+		t.Fatal("long page lost pagination")
+	}
+	for _, char := range reply {
 		units++
 		if char > 0xffff {
 			units++

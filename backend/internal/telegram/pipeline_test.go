@@ -178,8 +178,12 @@ func TestPollingPipelineIntegration(t *testing.T) {
 				if !slices.Equal(api.recipients, []int64{101, 202, 101, 202, 101}) {
 					t.Fatal("incorrect listing recipients")
 				}
-				for _, reply := range api.replies[2:] {
-					if !strings.HasPrefix(reply, "Траты: показано 1 из 1") {
+				for index, reply := range api.replies[2:] {
+					heading := "Все ваши расходы: показано 1 из 1"
+					if index == 2 {
+						heading = "Расходы за сегодня с 2026-10-17 по 2026-10-17: показано 1 из 1"
+					}
+					if !strings.HasPrefix(reply, heading) {
 						t.Fatal("listing failed or included another owner's rows")
 					}
 				}
@@ -262,7 +266,9 @@ func pipelineModel(t *testing.T, test pipelineScenario) (*llm.Client, *atomic.In
 			name, arguments = "total_expenses", `{}`
 		}
 		switch request.Messages[1].Content {
-		case "мои траты", "мои расходы", "покажи все расходы за сегодня":
+		case "мои траты", "мои расходы":
+			name, arguments = "list_expenses", `{}`
+		case "покажи все расходы за сегодня":
 			name, arguments = "list_expenses", `{"period":"today","date_from":null,"date_to":null,"category":null,"query":null}`
 		}
 		if test.invalidTool {

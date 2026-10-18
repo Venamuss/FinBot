@@ -4,12 +4,71 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"slices"
 	"testing"
 	"time"
 
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestOwnedListingDatesAndPagesIntegration(t *testing.T) {
+	pool := testPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	repository := New(pool)
+	admin := expense.NewService(repository)
+	service := expense.NewOwnerService(repository)
+	var ids []int64
+	for _, date := range []string{"2024-02-29", "2026-09-30", "2026-10-01", "2026-10-10", "2026-10-11", "2026-10-12", "2026-10-17", "2026-10-17"} {
+		for _, owner := range []string{"101", "202"} {
+			item, err := admin.Create(ctx, expense.Input{UserID: owner, Amount: "1", Category: "еда", SpentAt: date})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if owner == "101" {
+				ids = append(ids, item.ID)
+			}
+		}
+	}
+	slices.Reverse(ids)
+	tests := []struct {
+		name   string
+		filter expense.OwnerFilter
+		count  int
+	}{
+		{"all dates omitted", expense.OwnerFilter{}, 8},
+		{"today", expense.OwnerFilter{DateFrom: "2026-10-17", DateTo: "2026-10-17"}, 2},
+		{"last seven days", expense.OwnerFilter{DateFrom: "2026-10-11", DateTo: "2026-10-17"}, 4},
+		{"current week", expense.OwnerFilter{DateFrom: "2026-10-12", DateTo: "2026-10-17"}, 3},
+		{"current month", expense.OwnerFilter{DateFrom: "2026-10-01", DateTo: "2026-10-17"}, 6},
+		{"empty range", expense.OwnerFilter{DateFrom: "2026-10-18"}, 0},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var got []int64
+			for offset := 0; offset <= test.count; offset += 2 {
+				page, err := service.List(ctx, 101, test.filter, 2, offset)
+				if err != nil || page.Total != int64(test.count) || page.Offset != offset || page.Limit != 2 {
+					t.Fatalf("page=%+v, error=%v", page, err)
+				}
+				for _, item := range page.Items {
+					if item.UserID != 101 {
+						t.Fatal("list leaked another owner's expense")
+					}
+					got = append(got, item.ID)
+				}
+			}
+			if !slices.Equal(got, ids[:test.count]) {
+				t.Fatalf("unexpected order or pagination: %v, want %v", got, ids[:test.count])
+			}
+		})
+	}
+	page, err := service.List(ctx, 101, expense.OwnerFilter{}, 5, 0)
+	if err != nil || page.Total != 8 || len(page.Items) != 5 || page.Items[0].ID != ids[0] || page.Items[4].ID != ids[4] {
+		t.Fatalf("latest five: %+v, %v", page, err)
+	}
+}
 
 func TestOwnerReadsIntegration(t *testing.T) {
 	pool := testPool(t)

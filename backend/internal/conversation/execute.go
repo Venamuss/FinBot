@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/observability"
@@ -45,7 +46,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 
 		return question, nil
 	}
-	if next.pending != nil && next.pending.action.name == "" {
+	if next.pending != nil && next.pending.action.name == "" && operation.name != "list_expenses" {
 		// A missing-field follow-up retains the original request's calendar reference.
 		reference = next.pending.reference
 	}
@@ -82,7 +83,11 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 			next.pending = nil
 			return "Всего: " + total, nil
 		}
-		page, err := service.List(ctx, owner, filter, 20, 0)
+		limit, offset, err := listingPagination(operation)
+		if err != nil {
+			return invalidFilter, nil
+		}
+		page, err := service.List(ctx, owner, filter, limit, offset)
 		if err != nil {
 			return operationError(err)
 		}
@@ -90,7 +95,16 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		if len(page.Items) == 1 && page.Total == 1 {
 			next.focus = &page.Items[0]
 		}
-		return formatPage(page), nil
+		reply, shown := formatPage(page, filter, operation.value("period"), offset)
+		next.listing = &listingContext{
+			DateFrom:   filter.DateFrom,
+			DateTo:     filter.DateTo,
+			Category:   filter.Category,
+			Query:      filter.Query,
+			Limit:      limit,
+			NextOffset: offset + shown,
+		}
+		return reply, nil
 	case "update_expense", "delete_expense":
 		return orchestrator.modify(ctx, service, owner, operation, text, reference, next)
 	default:
@@ -112,7 +126,7 @@ func (orchestrator *Orchestrator) filter(operation action, reference time.Time) 
 	filter := expense.OwnerFilter{Category: expense.Category(operation.value("category")), Query: operation.value("query")}
 	period := operation.value("period")
 
-	if period == "" && operation.value("date_from") == "" && operation.value("date_to") == "" {
+	if operation.name == "total_expenses" && period == "" && operation.value("date_from") == "" && operation.value("date_to") == "" {
 		period = string(expense.PeriodToday)
 	}
 	if period != "" {
@@ -313,15 +327,90 @@ func expenseSummary(item expense.Expense) string {
 	return summary
 }
 
-func formatPage(page expense.Page) string {
-	if page.Total == 0 {
-		return "Траты не найдены."
+func listingPagination(operation action) (int, int, error) {
+	limit, offset := 20, 0
+	for _, field := range []string{"limit", "offset"} {
+		value := operation.value(field)
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(value)
+		if err != nil || strconv.Itoa(parsed) != value || parsed < 0 || parsed > 2147483647 {
+			return 0, 0, errArguments
+		}
+		if field == "limit" {
+			limit = parsed
+		} else {
+			offset = parsed
+		}
 	}
-	lines := []string{fmt.Sprintf("Траты: показано %d из %d", len(page.Items), page.Total)}
-	for _, item := range page.Items {
-		lines = append(lines, expenseSummary(item))
+	if limit < 1 || limit > 20 {
+		return 0, 0, errArguments
 	}
-	return strings.Join(lines, "\n")
+	return limit, offset, nil
+}
+
+func listingHeading(filter expense.OwnerFilter, period string) string {
+	heading := "Все ваши расходы"
+	periodLabels := map[string]string{
+		"today":           "Расходы за сегодня",
+		"yesterday":       "Расходы за вчера",
+		"last_seven_days": "Расходы за последние 7 дней",
+		"this_week":       "Расходы за текущую неделю",
+		"this_month":      "Расходы за текущий месяц",
+	}
+	if label, ok := periodLabels[period]; ok {
+		heading = label
+	}
+	if filter.DateFrom != "" || filter.DateTo != "" {
+		if period == "" {
+			heading = "Ваши расходы"
+		}
+		if filter.DateFrom != "" {
+			heading += " с " + string(filter.DateFrom)
+		}
+		if filter.DateTo != "" {
+			heading += " по " + string(filter.DateTo)
+		}
+	}
+	if filter.Category != "" {
+		heading += "; категория: " + string(filter.Category)
+	}
+	if filter.Query != "" {
+		query := []rune(strings.Join(strings.Fields(filter.Query), " "))
+		if len(query) > 60 {
+			query = append(query[:60], '…')
+		}
+		heading += "; описание содержит: «" + string(query) + "»"
+	}
+	return heading
+}
+
+func formatPage(page expense.Page, filter expense.OwnerFilter, period string, offset int) (string, int) {
+	heading := listingHeading(filter, period)
+	// Leave undisplayed rows for the next page, including when long Unicode
+	// comments make the message hit Telegram's UTF-16 limit before the page limit.
+	for shown := len(page.Items); shown >= 0; shown-- {
+		lines := []string{fmt.Sprintf("%s: показано %d из %d", heading, shown, page.Total)}
+		for _, item := range page.Items[:shown] {
+			lines = append(lines, expenseSummary(item))
+		}
+		if page.Total == 0 {
+			lines = append(lines, "Траты не найдены.")
+		} else if shown == 0 {
+			lines = append(lines, "На этой странице трат нет.")
+		} else {
+			lines = append(lines, fmt.Sprintf("Записи %d–%d.", offset+1, offset+shown))
+			if int64(offset+shown) < page.Total {
+				lines = append(lines, "Для следующей страницы напишите «ещё».")
+			}
+		}
+		reply := strings.Join(lines, "\n")
+		if len(utf16.Encode([]rune(reply))) <= 4096 {
+			return reply, shown
+		}
+	}
+	return invalidFilter, 0
 }
 
 func selectionPrompt(candidates []expense.Expense, confirmAmount bool) string {

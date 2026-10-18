@@ -27,8 +27,8 @@ var toolSpecs = map[string]toolSpec{
 		required:    []string{"amount", "category", "spent_at"},
 	},
 	"list_expenses": {
-		description: `List own expenses: "мои траты", "мои расходы", "покажи все расходы за сегодня". No date means today, not clarification. One call covers all categories. Set unrequested filters to null. Use period OR date_from/date_to, never both. за неделю = last_seven_days; на этой неделе = this_week.`,
-		fields:      []string{"period", "date_from", "date_to", "category", "query"},
+		description: `List own expenses: "мои траты", "мои расходы", "траты", "покажи расходы". No period requested means ALL dates; set dates and period to null. Independent requests never inherit previous filters. Reuse previous_listing only for explicit follow-ups. One call covers all categories. Set unrequested arguments to null. Use period OR date_from/date_to, never both. за неделю = last_seven_days; на этой неделе = this_week; за месяц = this_month. "последние 5 трат" = limit "5", no dates.`,
+		fields:      []string{"period", "date_from", "date_to", "category", "query", "limit", "offset"},
 		strict:      true,
 	},
 	"total_expenses": {
@@ -95,7 +95,13 @@ func toolsForModel() []llm.Tool {
 				}
 			case "period":
 				property["enum"] = []string{"today", "yesterday", "last_seven_days", "this_week", "this_month"}
-				property["description"] = "Relative date range resolved by the server. Default today. Do not combine with date_from or date_to."
+				property["description"] = "Relative date range resolved by the server. Null for all dates in a list; totals default to today. Do not combine with date_from or date_to."
+			case "limit":
+				property["pattern"] = "^([1-9]|1[0-9]|20)$"
+				property["description"] = "Page size as a decimal string, 1..20. Null defaults to 20. Use 5 for последние 5 трат."
+			case "offset":
+				property["pattern"] = "^(0|[1-9][0-9]*)$"
+				property["description"] = "Number of matches to skip, 0..2147483647, as a decimal string. Null defaults to zero. Use previous_listing.next_offset only for an explicit next-page request."
 			case "date_from", "date_to":
 				property["pattern"] = `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
 				property["description"] = "Inclusive YYYY-MM-DD boundary, only for an explicit date range. Null when using period."
