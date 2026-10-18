@@ -33,7 +33,7 @@
 
 ## Скриншоты
 
-Реальная панель React с [демоданными](docs/demo-data.md): все участники, имена, Telegram ID и расходы вымышлены. / Real React panel with fictional members, names, Telegram IDs, and expenses.
+Реальная панель React с демоданными: все участники, имена, Telegram ID и расходы вымышлены. / Real React panel with fictional members, names, Telegram IDs, and expenses.
 
 **Журнал расходов / Expense Dashboard** — все участники и последние траты. / All members and recent expenses.
 
@@ -349,7 +349,7 @@ For a reproducible demonstration, follow the [manual acceptance scenario](docs/s
 
 ## Screenshots
 
-[View the shared screenshot gallery](#screenshots-gallery) for the dashboard, expense filtering, and editing, with bilingual captions. All members, names, Telegram IDs, and expenses are [fictional demo data](docs/demo-data.md).
+[View the shared screenshot gallery](#screenshots-gallery) for the dashboard, expense filtering, and editing, with bilingual captions. All members, names, Telegram IDs, and expenses are demo data.
 
 ## Tech stack
 
