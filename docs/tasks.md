@@ -1050,3 +1050,107 @@ Unclassified/configuration or continuing transient failures can still pause the
 sequential queue. Real Telegram accounts, live LLMs, a physical lost-COMMIT-ack
 network fault, interactive browser behavior, and a remote GitHub Actions run were
 not checked in this increment. No paid calls, commits or subsequent fixes were made.
+
+## Final Review Monetary Fixes (F3/F4) — 2026-10-18
+
+Fixed F3/F4 only. Read AGENTS.md, the assignment/project/API/architecture documents,
+review findings, current source and existing regressions before implementation.
+F1/F2 production code and tests were preserved. No schema, dependency, provider,
+model, frontend behavior or development-data changes; no commits or paid calls.
+
+F3 was reproduced with a mocked model and real isolated PostgreSQL before the
+fix: `вода 2 л 100 руб` with proposed amount `2` created `2.00` and stored
+`вода л`. The creation validation boundary now treats all existing RUB price
+markers (including руб, руб., рублей, р, RUB/RUR and ₽) as monetary evidence,
+alongside `за`. Every marked price must equal the proposal using `expense.Amount`;
+conflicting marked prices require clarification before service/database mutation.
+A model's `amount_text` must identify a marked expression when one exists, so
+cleanup cannot consume a separate equal-valued quantity/model number. Bare prices
+and quantities retain their existing handling; no last-number heuristic was added.
+
+Creation follow-ups validate the retained draft source when answering other fields.
+An amount clarification instead validates the actual new amount answer, allowing
+users to resolve competing earlier prices without letting the model invent an
+answer. Update/deletion rules are unchanged; old and replacement amounts in
+updates are not subjected to creation's competing-price rule.
+
+F4 was also reproduced against PostgreSQL before the fix: `кофе 100 THB` created
+`100.00` when the tool omitted currency. Source validation now uses a compact ISO
+4217 List One snapshot from the official SIX XML (publication 2026-09-17), with
+no runtime download or new dependency. Codes are checked case-insensitively next
+to a numeric token, before or after it, with optional whitespace. RUB/RUR remain
+allowed, missing currency still defaults to RUB, and existing symbols/names and
+crypto codes remain rejected. An unknown uppercase three-letter suffix at the
+end of a numeric price also asks for explicit RUB clarification. Product tokens
+elsewhere are not classified merely for being uppercase: SSD 500GB 4000, USB
+кабель 250 and CAD программа за 4000 remain accepted. The existing execute/answer
+boundary continues to enforce source currency independently of tool currency.
+
+Regression files:
+
+- Extended `backend/internal/conversation/description_test.go`: correct RUB price
+  cleanup, quantities, model numbers, decimals, and equal quantity/price values.
+- Added `backend/internal/conversation/monetary_test.go`: retained draft source,
+  amount clarification, competing explicit prices, all requested bare-language
+  examples, uppercase product abbreviations, foreign-code contexts, unchanged
+  old/new amount updates, cancellation and independent commands.
+- Added `backend/internal/postgres/monetary_test.go`: 48 rejected-input cases
+  across omitted/false-RUB tool currencies, omitted/present amount_text, all RUB
+  marker forms, quantities/models, decimals, competing prices, USD/EUR/THB/PLN,
+  prefix/adjacent codes, symbols and unknown suffixes. Every case snapshots all
+  expense rows for A/B before/after, rejects success, checks durable replay and
+  then creates an independent 50 RUB expense. No partial or unrelated mutation.
+
+Mandatory automated verification completed (Go commands from `backend/`):
+
+```sh
+export TEST_DATABASE_URL='postgres://finbot_test:disposable-test-password@127.0.0.1:18756/finbot_test?sslmode=disable'
+go vet ./...
+go test -json ./... -count=1 -timeout=180s
+go test -race -json ./... -count=1 -timeout=180s
+go test -race -json ./internal/conversation ./internal/postgres -run 'Test(Monetary|ExplicitPriceClarification|CurrencySource|CurrencyFailure|CreationDescription|UnsafeDescription)' -count=1 -timeout=120s
+```
+
+- Full ordinary and race runs: **1,210 tests/subtests passed each, zero failed or
+  skipped cases**. After adding final omitted-amount_text/equal-quantity SQL cases,
+  the final targeted race run passed **169 tests/subtests**, zero failed/skipped.
+- Both full runs include F1 `TestCancellationCommitRecovery`,
+  `TestCancellationUncertainCommitRecoveryIntegration`, known rollback tests,
+  and F2 `TestDeliveryPollingRecoveryIntegration`. Existing allowed A/B, denied C,
+  empty allowlist, ownership/version, idempotency, cancellation, and Telegram
+  conversation/polling regressions passed.
+- `gofmt -w` on all six changed/new Go files; `gofmt -l backend` from root: empty.
+  `go vet ./...` passed after the final production changes. Final diff review
+  covered Go readability, domain/transport boundaries, errors, SQL ownership,
+  atomicity and unchanged F1/F2 behavior; `git diff --check` passed.
+- `npm test` and `npm run build` from `frontend/`: 55 tests passed, TypeScript and
+  Vite production build passed. No frontend source changes.
+- `docker build --network host -t finbot-money-app:check .`: passed.
+- With `POSTGRES_PASSWORD=disposable-smoke-password HTTP_PORT=18755
+  HTTP_BIND_IP=127.0.0.1`, ran `docker compose --env-file /dev/null -p
+  finbot-money-check -f compose.yaml -f /tmp/finbot-money-compose.yaml config
+  --quiet`, then the same Compose command with `up -d --no-build --wait
+  --wait-timeout 90`: passed, all three services healthy. Used the new app image,
+  existing unchanged frontend image, separate test volume and disabled bot/API
+  credentials, with an unreachable synthetic LLM endpoint.
+- `python3 scripts/smoke.py --url http://127.0.0.1:18755`: passed synthetic CRUD,
+  member ownership/names, partial updates/reassignment, filters, sorting,
+  pagination and errors. Disposable Compose and PostgreSQL resources removed.
+
+Earlier failures are not counted as passes: the first fixture run needed a valid
+administrative sort; the next run reproduced both defects as intended. Initial
+expanded fixtures needed required spent_at/amount arguments and the existing
+reference date. The first full implementation run exposed two failing subtests
+in `TestAuditModelCannotChooseBetweenAlternativeAmounts` because retained
+alternatives blocked a valid explicit answer; fixed by validating the new amount
+answer separately. Subsequent full ordinary/race and final targeted runs passed.
+An initial sandbox-only test attempt could not write the Go cache; successful
+checks used approved cache/socket access. Logs are under `/tmp/finbot-money-*`.
+
+Remaining limitations / optional checks: this is bounded source validation, not
+a complete language parser. Numeric context is intentionally conservative for
+ambiguous currency/product suffixes; unknown full currency names are not exhaustively
+recognized. The code snapshot needs maintenance when ISO changes. Live Telegram,
+live cloud/local LLM interpretation, interactive browser testing and remote CI
+were not executed. Existing manual MVP acceptance remains outstanding separately;
+this increment completes the requested F3/F4 fixes and automated checks only.

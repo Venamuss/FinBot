@@ -26,19 +26,28 @@ func (orchestrator *Orchestrator) createExpense(ctx context.Context, repo Reposi
 		return operationError(ctx, expense.ValidationError{"spent_at": "invalid"})
 	}
 
+	source := text
+	if next.pending != nil {
+		source = next.pending.text + "\n" + text
+	}
+
+	priceSource := source
+	answeringAmount := next.pending != nil && next.pending.field == "amount"
+	if answeringAmount {
+		// A direct answer resolves the earlier amount ambiguity. Other field
+		// replies must still honor the draft's original monetary evidence.
+		priceSource = text
+	}
+
 	amount, err := expense.ParseAmount(operation.value("amount"))
-	if err == nil && (ambiguousPrice(text, amount) || !matchesMarkedPrice(text, amount)) {
+	if err == nil && (ambiguousPrice(priceSource, amount) || !matchesMarkedPrice(priceSource, amount) ||
+		(answeringAmount && !containsPrice(text, amount))) {
 		draft := copyAction(operation)
 		delete(draft.args, "amount")
 		delete(draft.args, "amount_text")
 
-		next.pending = &pending{field: "amount", action: draft, text: text, reference: reference}
+		next.pending = &pending{field: "amount", action: draft, text: source, reference: reference}
 		return clarificationQuestions["amount"], nil
-	}
-
-	source := text
-	if next.pending != nil {
-		source = next.pending.text + "\n" + text
 	}
 
 	comment, err := creationComment(operation, source)

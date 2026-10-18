@@ -12,8 +12,8 @@ import (
 
 var errDescription = errors.New("expense description needs clarification")
 
-// This recognizes only a price already identified by the model. It does not
-// choose the last number in a message or infer intent from numeric tokens.
+// Price tokens support source validation and cleanup of a model-identified
+// expression. Bare numbers alone do not establish which token is the price.
 const pricePattern = `(?i)(?:за\s+)?(?:₽\s*)?([0-9]+(?:[.,][0-9]+)?)(?:\s*(?:рублях|рублей|рубля|рубль|рубли|руб\.?|р\.?|RUB|RUR|₽))?`
 
 var exactPrice = regexp.MustCompile(`^` + pricePattern + `$`)
@@ -92,7 +92,7 @@ func ambiguousPrice(source string, amount expense.Amount) bool {
 
 func matchesMarkedPrice(source string, amount expense.Amount) bool {
 	for _, match := range priceMatches(source) {
-		if !strings.HasPrefix(strings.ToLower(source[match[0]:match[1]]), "за") {
+		if !markedPriceExpression(source, match) {
 			continue
 		}
 		value := strings.ReplaceAll(source[match[2]:match[3]], ",", ".")
@@ -104,13 +104,30 @@ func matchesMarkedPrice(source string, amount expense.Amount) bool {
 	return true
 }
 
+// A preposition or RUB marker makes this monetary evidence. A bare number
+// can still be a quantity or a product model number.
+func markedPriceExpression(source string, match []int) bool {
+	prefix := strings.TrimSpace(source[match[0]:match[2]])
+	suffix := strings.TrimSpace(source[match[3]:match[1]])
+	return prefix != "" || suffix != ""
+}
+
 func completePriceExpression(source, expression string) bool {
+	found := false
+	marked := false
+	foundMarked := false
 	for _, match := range priceMatches(source) {
+		isMarked := markedPriceExpression(source, match)
+		marked = marked || isMarked
 		if source[match[0]:match[1]] == expression {
-			return true
+			found = true
+			foundMarked = isMarked
 		}
 	}
-	return false
+
+	// Even an equal-valued quantity must not be stripped from the comment
+	// when a separate explicitly marked price exists in the source.
+	return found && (!marked || foundMarked)
 }
 
 func containsPrice(comment string, amount expense.Amount) bool {
