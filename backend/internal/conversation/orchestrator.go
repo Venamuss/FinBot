@@ -148,7 +148,7 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 				return "", ctx.Err()
 			}
 			if errors.Is(err, llm.ErrToolCallCount) || errors.Is(err, llm.ErrInvalidResponse) {
-				return orchestrator.saveReply(ctx, updateID, owner, invalidModelResponse)
+				return orchestrator.saveReply(ctx, updateID, owner, interpretationFailure(text, invalidModelResponse))
 			}
 			// Persist a safe failure result so one poison update cannot block polling.
 			return orchestrator.saveReply(ctx, updateID, owner, botresponse.Unavailable)
@@ -170,7 +170,7 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 				category = invalid.category
 			}
 			planLogger.WarnContext(ctx, "Conversation action rejected", "error_category", "invalid_tool_call", "stage", "tool_arguments", "validation_category", category)
-			return orchestrator.saveReply(ctx, updateID, owner, invalidRequest)
+			return orchestrator.saveReply(ctx, updateID, owner, interpretationFailure(text, invalidRequest))
 		}
 
 		planLogger.InfoContext(ctx, "Conversation action selected")

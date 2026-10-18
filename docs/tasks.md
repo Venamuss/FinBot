@@ -1154,3 +1154,123 @@ recognized. The code snapshot needs maintenance when ISO changes. Live Telegram,
 live cloud/local LLM interpretation, interactive browser testing and remote CI
 were not executed. Existing manual MVP acceptance remains outstanding separately;
 this increment completes the requested F3/F4 fixes and automated checks only.
+
+## Final Submission Polish — 2026-10-19
+
+Scope: unsupported-currency reply, focused regressions, S1 acceptance-guide
+corrections and repository hygiene only. Read AGENTS.md and the assignment,
+requirements, API, architecture, review reports and affected code before changes.
+Europe/Moscow behavior, dates, schema, REST contracts, provider/model, dependencies,
+frontend and sequential polling were left unchanged. No staging, commit or push.
+
+Changes:
+
+- `backend/internal/botresponse/format.go`: shared deterministic reply:
+  `Поддерживаются только расходы в рублях (RUB). Укажите сумму в рублях.`
+- `backend/internal/conversation/{currency,orchestrator}.go`: reuse the existing
+  source currency guard when model response/tool arguments cannot be interpreted.
+  No second model call; provider/API failures keep the unavailable reply.
+- `backend/internal/conversation/{execute,state}.go`: keep server-side rejection
+  and existing valid RUB clarification; do not label model-invented currency as
+  user-provided currency. A rejected invalid currency draft is discarded rather
+  than retained. Unrelated amount/interpretation errors keep their own responses.
+- `backend/internal/telegram/currency_test.go`: three integration tests, with 59
+  subcases, through actual Telegram/LLM HTTP adapters, orchestration and isolated
+  PostgreSQL. Cover six requested foreign currencies/symbols, valid/malformed
+  tools, invalid model responses, updates, exact delivered text, unchanged A/B
+  SQL snapshots, zero mutation calls, single model call, durable replay and next
+  independent `еда 50`. Also cover default/explicit RUB, SSD/USB, price/quantity
+  extraction, missing/ambiguous/invalid amounts, model-only currency claims,
+  generic fallback and provider failure with currency evidence.
+- Existing `conversation/amount_test.go` now expects the generic response for
+  unsupported currency invented only by the model; `postgres/monetary_test.go`
+  matches the revised wording without weakening SQL/replay/recovery assertions.
+- `docs/submission-readiness.md`: mark Slice 05 evidence as historical, correct
+  deletion to identify → confirm → delete, document `стоп`/`отмена`/`нет`, and
+  describe terminal delivery recovery, temporary retries and idempotency without
+  promising delivery. Update current acceptance/CI status. The two existing
+  untracked uppercase review reports retain their original bodies with a short
+  historical-status notice. README changes are limited to live/CI status.
+
+Mandatory verification actually executed (Go commands from `backend/`):
+
+```sh
+export TEST_DATABASE_URL='postgres://finbot_test:disposable-polish-password@127.0.0.1:18766/finbot_test?sslmode=disable'
+test -z "$(gofmt -l cmd internal migrations)"
+go vet ./...
+go test ./internal/conversation ./internal/postgres ./internal/telegram -count=1 -timeout=180s
+go test -json ./... -count=1 -timeout=180s
+go test -race -json ./... -count=1 -timeout=180s
+go test -race -json ./internal/telegram -run 'Test(UnsupportedCurrencyResponse|CurrencyErrorClassification|RUBAndQuantityCreation)Integration' -count=1 -timeout=120s
+```
+
+All passed. Both full suites: **1,280 tests/subtests passed, zero failed/skipped**;
+final targeted race run: **62 tests/subtests passed, zero failed/skipped**. The
+last targeted run covers a final nil-safe assertion improvement after the full
+runs. F1 uncertain-commit cancellation and known rollback, F2 permanent/transient
+polling delivery, F3 marked-price/quantity extraction and F4 source-currency
+rejection remain protected. Existing deletion confirmation, repeated cancellation,
+allowed A/B, denied C, empty allowlist, SQL ownership and idempotency tests passed.
+The initial new-test baseline failed as expected, reproducing generic currency
+errors and model-only currency misclassification before the fix; that failure is
+not counted as a pass. Logs are `/tmp/finbot-polish-*.log` / `*.json`.
+
+Other verification from `frontend/` / repository root:
+
+| Exact command / check | Result |
+|---|---|
+| `npm test` | Passed, 55 tests in four files |
+| `npm run build` | Passed, includes `npm run typecheck` / `tsc --noEmit` and Vite build |
+| `docker build --network host -t finbot-polish-app:check .` | Passed; separate app image, existing unchanged `finbot-submission-frontend:20261018` reused for smoke |
+| `docker compose --env-file /dev/null -p finbot-polish-check -f compose.yaml -f /tmp/finbot-polish-compose.yaml config --quiet` | Passed |
+| Same Compose prefix, `up -d --no-build --wait --wait-timeout 90` and `ps --format json` | Passed; all three services healthy |
+| `python3 scripts/smoke.py --url http://127.0.0.1:18765` | Passed: CRUD, members/ownership, partial updates/reassignment, filters/sorting/pages/errors |
+| `gofmt -w` on changed Go files, final `test -z "$(gofmt -l backend)"`, `git diff --check` | Passed; final diff/functions reviewed for style, boundaries, errors, ownership and atomicity |
+| Local Markdown paths/anchors in README, AGENTS and docs | Passed after adding this stage record |
+
+Compose used synthetic `POSTGRES_PASSWORD=disposable-smoke-password`,
+`HTTP_BIND_IP=127.0.0.1`, `HTTP_PORT=18765`, `TIME_ZONE=Europe/Moscow`, empty bot
+token/allowlist/model key/proxies, unreachable `LLM_BASE_URL=http://127.0.0.1:1/v1`,
+and a separate `finbot-polish-check_postgres_data` volume. The override changes
+only image tags. Go tests used a separate `finbot-polish-test-db` PostgreSQL 17
+container with random per-test schemas. Removed only these disposable containers,
+network and volumes afterward; the three development containers remain healthy.
+An initial read-only Docker inventory was denied by the sandbox; reran with
+approved Docker access. No development database was read or modified.
+
+Repository and submission status:
+
+- Branch `master`, unchanged HEAD `d18e5a735923f22335ab495ed2a7d9e6dbefefca`;
+  remote `main` is `https://github.com/Venamuss/FinBot.git` (fetch/push).
+- Initially untracked: `docs/FINAL_CODE_REVIEW.md` and
+  `docs/SUBMISSION_READINESS.md`. Both still exist and remain **untracked**, not
+  included in HEAD/index. New `backend/internal/telegram/currency_test.go` is
+  likewise untracked until the developer stages it. Ten tracked files modified;
+  nothing staged. Review/include both linked historical documents in the final
+  commit so their links resolve in a fresh checkout.
+- `.gitignore`, `.env.example`, setup, Compose, workflow and tracked paths reviewed.
+  `.env`, frontend local env, node_modules and dist are ignored; no unnecessary
+  generated/test artifacts tracked. Optional proxies have no required local/VPN
+  address. The intended configuration remains Europe/Moscow.
+- Credential-pattern checks of tracked files and 379 reachable committed Git
+  blobs found no keys/tokens/private keys or exact local credential matches.
+  Values were never printed. This is a bounded local scan, not proof about
+  inaccessible remote history or arbitrary unknown secret formats.
+- Public GitHub API: **CI completed successfully for current HEAD**,
+  [run 39154509084](https://github.com/Venamuss/FinBot/actions/runs/39154509084).
+  This verifies the committed revision, not this uncommitted polish. The developer
+  must check the new revision's CI after committing/pushing.
+- Owner-reported live acceptance in the current request covers natural-language
+  CRUD, deletion confirmation, repeated cancellation, monetary extraction,
+  currency rejection/recovery and user isolation. Recorded as owner evidence;
+  not claimed as a live test executed by this agent. It supersedes historical
+  pending-live notes without rewriting the earlier reviews' results.
+
+Optional/unexecuted checks: no new live Telegram/provider/local-LLM requests,
+paid OpenRouter calls, interactive browser session, fresh frontend Docker build,
+remote CI for uncommitted changes, or repeated restart/persistence smoke (already
+covered by prior audits/CI). No current failed check or confirmed application
+defect remains. Existing bounded language validation, in-memory conversation
+context and retryable delivery limitations remain documented. Ready for the
+owner's final diff review, intentional staging/commit/push and CI verification;
+no further features or refactoring are part of this stage.

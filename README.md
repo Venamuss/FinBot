@@ -223,7 +223,7 @@ TZ=America/Los_Angeles npm test -- src/validation.test.ts
 TZ=Pacific/Kiritimati npm test -- src/validation.test.ts
 ```
 
-[Процесс CI](.github/workflows/ci.yml) проверяет форматирование и vet, полный набор тестов Go с детектором гонок и PostgreSQL 17, тесты и сборку фронтенда с проверкой типов, часовые пояса, оба Docker-образа, запуск Compose и сохранность REST-данных после перезапуска и пересоздания контейнеров. Успешный запуск на GitHub для этой сдачи **не подтверждён**; значок означает только наличие конфигурации. Фактические локальные результаты и оставшиеся ручные проверки указаны в [отчёте QA](docs/submission-readiness.md).
+[Процесс CI](.github/workflows/ci.yml) проверяет форматирование и vet, полный набор тестов Go с детектором гонок и PostgreSQL 17, тесты и сборку фронтенда с проверкой типов, часовые пояса, оба Docker-образа, запуск Compose и сохранность REST-данных после перезапуска и пересоздания контейнеров. Для HEAD `d18e5a7` подтверждён [успешный запуск CI](https://github.com/Venamuss/FinBot/actions/runs/39154509084); финальные незакоммиченные изменения проверены локально и требуют нового CI после push. Значок означает только наличие конфигурации. Фактические локальные результаты и оставшиеся ручные проверки указаны в [отчёте QA](docs/submission-readiness.md).
 
 ## Безопасность
 
@@ -265,7 +265,7 @@ compose.yaml             Локальное развёртывание из тр
 
 ## Известные ограничения
 
-- Ручная приёмка Telegram с разрешёнными пользователями A/B и запрещённым C ещё не выполнена. Тесты с имитациями API и проверка панели в реальном браузере прошли, но не подтверждают текущую интерпретацию провайдером или доставку реальным аккаунтам. См. [вывод о готовности к сдаче](docs/submission-readiness.md#g-final-verdict).
+- Владелец сообщил об успешной живой приёмке Telegram: CRUD, подтверждение удаления, повторная отмена, извлечение суммы/описания, отклонение валюты, восстановление и изоляция пользователей. При финальной полировке живые запросы не повторялись. См. [вывод о готовности к сдаче](docs/submission-readiness.md#g-final-verdict).
 - Опрос выполняется последовательно одним процессом. Доставка отказа в доступе выполняется по возможности; ошибки отправки 400/403 после сохранения результата не блокируют очередь. Сбои БД, временные и неклассифицированные ошибки Telegram сохраняют повторные попытки и могут приостановить очередь. При неоднозначном результате отправки ответ может прийти повторно, но изменение расхода остаётся идемпотентным.
 - Контекст выбора траты хранится в памяти. Списки бота содержат первые 20 записей и общее количество; если кандидатов на изменение больше 10, нужно сузить запрос. Поиск по описанию использует буквальную подстроку комментария.
 - Для сохранённых ответов Telegram нет очистки по сроку хранения или постоянной очереди доставки. Удаление расхода не удаляет ранее сохранённые ответы.
@@ -497,7 +497,7 @@ TZ=America/Los_Angeles npm test -- src/validation.test.ts
 TZ=Pacific/Kiritimati npm test -- src/validation.test.ts
 ```
 
-The [CI workflow](.github/workflows/ci.yml) checks formatting/vet, the complete race-enabled Go suite with PostgreSQL 17, frontend tests/typecheck/build, timezone tests, both Docker images, Compose startup, and REST persistence across restart and recreation. A successful GitHub run has **not been verified** for this submission; the badge indicates configuration only. See the [QA report](docs/submission-readiness.md) for actual local results and remaining live acceptance.
+The [CI workflow](.github/workflows/ci.yml) checks formatting/vet, the complete race-enabled Go suite with PostgreSQL 17, frontend tests/typecheck/build, timezone tests, both Docker images, Compose startup, and REST persistence across restart and recreation. A [successful CI run](https://github.com/Venamuss/FinBot/actions/runs/39154509084) is verified for HEAD `d18e5a7`; the final uncommitted polish has local verification and needs a new CI run after push. The badge indicates configuration only. See the [QA report](docs/submission-readiness.md) for actual local results and current acceptance status.
 
 ## Security notes
 
@@ -539,7 +539,7 @@ compose.yaml             Three-service local deployment
 
 ## Known limitations
 
-- Live Telegram acceptance with allowed users A/B and denied C remains pending. Mock API tests and a real-browser panel run passed; they do not establish current provider interpretation or real-account delivery. See the [submission verdict](docs/submission-readiness.md#g-final-verdict).
+- The owner reports successful live Telegram acceptance: CRUD, deletion confirmation, repeated cancellation, amount/description extraction, currency rejection, recovery and user isolation. Final polish did not repeat live requests. See the [submission verdict](docs/submission-readiness.md#g-final-verdict).
 - One sequential polling process. Denial delivery is best-effort; 400/403 send rejections after a saved result do not block later updates. Database, transient and unclassified Telegram failures remain retryable and can pause the queue. An uncertain send can repeat a reply, while the expense mutation remains idempotent.
 - Conversation focus is in memory. Bot lists return the first 20 records and a total; more than 10 modification candidates require a narrower query. Description search is a literal comment substring.
 - Saved Telegram replies have no retention cleanup or durable delivery outbox. Expense deletion does not erase historical saved replies.

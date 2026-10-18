@@ -4,6 +4,8 @@ import (
 	"regexp"
 	"strings"
 	"unicode"
+
+	"github.com/Venamuss/FinBot/internal/botresponse"
 )
 
 // ISO 4217 List One (including fund/metal/testing codes), published 2026-09-17.
@@ -121,4 +123,14 @@ func currencyClarification(operation action) action {
 	}
 	result.name = "clarify"
 	return result
+}
+
+// Classify interpretation failures from the source, never from model error text.
+// Provider failures retain their separate unavailable response.
+func interpretationFailure(text, fallback string) string {
+	if unsupportedCurrency(text) {
+		return botresponse.UnsupportedCurrency
+	}
+
+	return fallback
 }

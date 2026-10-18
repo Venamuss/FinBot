@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Venamuss/FinBot/internal/botresponse"
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/llm"
 	"github.com/Venamuss/FinBot/internal/observability"
@@ -12,7 +13,7 @@ import (
 
 var clarificationQuestions = map[string]string{
 	"amount":   "Какую сумму записать?",
-	"currency": "Поддерживаются только рубли. Укажите сумму в рублях явно, например: 123 руб.",
+	"currency": botresponse.UnsupportedCurrency,
 	"category": "Уточните категорию траты.",
 	"spent_at": "Уточните дату траты.",
 	"target":   "Какую трату выбрать?",
@@ -196,6 +197,13 @@ func (orchestrator *Orchestrator) clarify(ctx context.Context, operation action,
 	}
 
 	if err := orchestrator.validateDraft(draft, reference); err != nil {
+		if field == "currency" && unsupportedCurrency(text) {
+			// Invalid model arguments must not hide source currency evidence or
+			// leave an invalid draft available for a later clarification.
+			next.pending = nil
+			return action{}, reference, botresponse.UnsupportedCurrency, nil
+		}
+
 		return action{}, reference, "", err
 	}
 

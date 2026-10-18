@@ -106,7 +106,15 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 
 	// Check source currency even when the model omits or mislabels it.
 	if operation.name == "create_expense" || operation.name == "update_expense" || operation.name == "clarify" {
-		if unsupportedCurrency(text) || (operation.value("currency") != "" && operation.value("currency") != "RUB") {
+		if unsupportedCurrency(text) {
+			operation = currencyClarification(operation)
+		} else if (operation.value("currency") != "" && operation.value("currency") != "RUB") ||
+			(operation.name == "clarify" && operation.value("field") == "currency") {
+			// A model-only currency claim is not evidence from the user.
+			if next.pending == nil || !unsupportedCurrency(next.pending.text) {
+				return invalidRequest, nil
+			}
+
 			operation = currencyClarification(operation)
 		} else if next.pending != nil && next.pending.field == "currency" && !explicitRubles(text) {
 			return rejectStateTool(ctx, next, operation.name), nil

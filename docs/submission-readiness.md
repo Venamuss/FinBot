@@ -1,8 +1,10 @@
-# Slice 05 — Submission Readiness
+# Slice 05 — Historical QA and Current Acceptance Guide
 
-Audit date: **2026-10-18**. Scope: final requirements review, regression testing, fresh setup, README, and security review. The [original assignment](test-task-expenses.md) and implementation are the source of truth; [project choices](requirements.md) are tracked separately.
+**Current status — 2026-10-19:** the owner reports successful live Telegram acceptance for natural-language CRUD, deletion confirmation, repeated cancellation, amount/description extraction, unsupported currency rejection, recovery and user isolation. This was reported by the owner, not repeated by this automated polish. F1–F4 passed the subsequent regression audit; see the [final polish record](tasks.md#final-submission-polish--2026-10-19) for current checks and repository status. The original Slice 05 evidence below is historical; sections E–G contain updated limitations and acceptance instructions.
 
-**Verdict: implementation and local automated/browser QA are ready; final submission acceptance remains conditional on the real Telegram A/B/C scenario below.** No missing assignment feature or confirmed critical application defect was found. Current provider interpretation and real-account delivery were not exercised in this slice. No live Telegram messages or paid LLM requests were made.
+Historical audit date: **2026-10-18**. Scope: final requirements review, regression testing, fresh setup, README, and security review. The [original assignment](test-task-expenses.md) and implementation are the source of truth; [project choices](requirements.md) are tracked separately.
+
+**Historical Slice 05 verdict: implementation and local automated/browser QA were ready; live Telegram A/B/C acceptance was still pending at that audit.** No missing assignment feature or confirmed critical application defect was found. Current provider interpretation and real-account delivery were not exercised in this slice. No live Telegram messages or paid LLM requests were made.
 
 ## A. Requirements Coverage
 
@@ -148,13 +150,13 @@ Usage examples correspond to tool schemas, calendar/focus rules, tests and the o
 
 ## E. Remaining Limitations
 
-1. **Mandatory live acceptance remains:** use two allowed Telegram accounts and one denied account against the configured provider. A historical direct model check and current mocks do not replace this.
-2. **CI execution remains unverified:** configuration and local equivalents passed; no claim of a green GitHub run is made.
+1. **Live acceptance:** the owner reports successful live Telegram testing as recorded above. The repeatable A/B/C checklist below remains available; no new live run was performed during final polish.
+2. **Remote CI:** [CI succeeded](https://github.com/Venamuss/FinBot/actions/runs/39154509084) for HEAD `d18e5a735923f22335ab495ed2a7d9e6dbefefca`. These final uncommitted changes are checked locally; verify a new run after the developer commits and pushes.
 3. The admin interface is intentionally unauthenticated and must stay on loopback/a trusted network. It is not suitable for unrestricted public exposure.
-4. One sequential polling process; permanent reply failure can block the queue. A network-ambiguous send can duplicate the reply, without duplicating a committed expense mutation.
+4. One sequential polling process. Denial delivery is best-effort; recipient-specific permanent 400/403 delivery failures after a saved result do not indefinitely block later updates. Temporary failures need retries; database, configuration and unclassified failures can still pause the queue. Transactional idempotency prevents duplicate committed mutations, but a network-ambiguous send can duplicate a reply. There is no durable delivery outbox or guarantee that every reply reaches its recipient.
 5. Conversation focus expires/lives in memory; lists are limited to 20 bot rows, ambiguity candidates to 10, and comment search is a literal substring. Saved replies have no retention cleanup/outbox; deleting an expense does not erase saved replies.
 6. Single family, private text messages, one expense write per request, no currency conversion, and offset pages can shift under concurrent changes.
-7. Optional live local LLM verification (T13), screenshots, other browser engines, real proxy outages and load testing were not performed. They are separate from the mandatory live Telegram gate.
+7. Optional live local LLM verification (T13), screenshots, other browser engines, real proxy outages and load testing were not performed. They remain optional checks.
 
 ## F. Manual Acceptance Test
 
@@ -164,14 +166,14 @@ Use a **separate test checkout/Compose project and disposable volume**, syntheti
 2. A sends `кофе 350`; B sends `такси 1200 вчера`. Confirm committed replies, their IDs, categories and dates. In React, see both records and verify member/category/date filters. Assign optional synthetic member names.
 3. In React, edit A's coffee to `450.00`; leave the owner unchanged. A sends `покажи кофе за сегодня` to reselect the now-current record; expect `450.00`. Reading it should not change timestamps or amounts. A stale edit attempted before reselection must ask for clarification.
 4. Run `docker compose restart`, wait for health with `docker compose up -d --wait`, and confirm both expenses and member names remain in React. A/B each send `покажи траты за неделю` and confirm only their own record appears. A's monthly food total must exclude B's taxi.
-5. A sends `удали последнюю трату`; in this isolated scenario A owns only the coffee, so it is the last-created record after restart. Confirm it disappears from both React and A's list. B's taxi must remain.
+5. A sends `удали последнюю трату`; in this isolated scenario A owns only the coffee, so it is the last-created record after restart. The bot identifies it and asks for confirmation. Verify the expense remains in React until A replies `да`; only then should it disappear from React and A's list. B's taxi must remain. In separate attempts, `стоп`, `отмена` or a negative confirmation (`нет`) must cancel the pending deletion without deleting the expense; repeated cancellation and a later idle `да` must be harmless.
 6. A asks to edit/delete B's known expense ID; expect no disclosure/change. C sends `кофе 350` and `мои расходы`; expect only generic access denial, with no LLM call or data change. Also verify an empty allowlist denies everyone after applying configuration while the panel continues working.
-7. For ambiguity, A creates two taxi expenses, then sends `удали такси`. Confirm neither is deleted before selecting an offered number. Send a mismatched previous-amount edit and confirm clarification is required.
+7. For ambiguity, A creates two taxi expenses, then sends `удали такси`. Confirm neither is deleted before selecting an offered number; selection must then open a separate confirmation, with deletion only after `да`. Send a mismatched previous-amount edit and confirm clarification is required.
 
 Record date, configured model identifier, passed/failed steps, observed IDs/amounts from **synthetic data only**, and whether A/B/C used real accounts. Do not record keys, tokens, or real expense contents. Stop the test stack normally; remove its disposable volume only after confirming the Compose project name. Never reset the development database.
 
 ## G. Final Verdict
 
-**FinBot has no identified assignment implementation blocker, and local backend, frontend, browser and Docker QA passed. It is not yet fully accepted for submission under the project's own T12 gate:** the real Telegram/selected-provider A/B/C scenario still needs to be recorded. A completed GitHub CI run is also unverified, although its local checks passed. Optional T13 is not a blocker.
+**No confirmed F1–F4 application defect remains after the regression audit.** The owner reports successful live acceptance, and the final polish adds a specific server-selected unsupported-currency response with automated pipeline regressions. Current local verification and any unavailable checks are recorded in the [final polish record](tasks.md#final-submission-polish--2026-10-19). Remote CI succeeded for the current HEAD as linked in section E; the final uncommitted changes require their own CI run after push. Local results do not establish that future remote result. Optional T13 is not a blocker.
 
-Complete and record the manual scenario before claiming full submission readiness. Slice 05 ends with the reviewed implementation, polished README, regression tests and this explicit acceptance boundary; no subsequent development phase is authorized or started.
+The older [code review](FINAL_CODE_REVIEW.md) and [submission audit](SUBMISSION_READINESS.md) describe their stated revisions and evidence dates. Their original findings/verdicts are historical, not current unresolved defects. Before the final commit, review the intended files, including the existing untracked reports, and include any documents referenced by committed links. No automatic staging, commit or push is part of this polish.

@@ -135,8 +135,8 @@ func TestCurrencyArgumentsAndUpdates(t *testing.T) {
 			t.Fatal(err)
 		}
 		reply = handle(t, orchestrator, model, int64(index+4), 202, "синтетический запрос", "create_expense", string(args))
-		if !strings.Contains(reply, "рублях") || len(store.repo.items) != 1 {
-			t.Fatal("unsupported tool currency was accepted")
+		if reply != invalidRequest || len(store.repo.items) != 1 {
+			t.Fatal("model-only currency claim was accepted or misclassified")
 		}
 	}
 }
