@@ -23,8 +23,8 @@ type toolSpec struct {
 
 var toolSpecs = map[string]toolSpec{
 	"create_expense": {
-		description: "Create one expense from a clear description and amount, including <description> <amount> without a currency marker. Extract amount independently of category; use другое if uncertain. Preserve description in comment; use today if no date. Clarify only missing/ambiguous amounts or unsupported currency. RUB only; never convert.",
-		fields:      []string{"amount", "category", "spent_at", "comment", "currency", "request_context"},
+		description: "Create one expense from a clear description and amount, including <description> <amount> without a currency marker. Extract amount independently of category; use другое if uncertain. Put only the description in comment, excluding the extracted price and currency; preserve model numbers and quantities. Include amount_text as the exact source price expression (including за and currency when present). Use today if no date. Clarify only missing/ambiguous amounts or unsupported currency. RUB only; never convert.",
+		fields:      []string{"amount", "amount_text", "category", "spent_at", "comment", "currency", "request_context"},
 		required:    []string{"amount", "spent_at"},
 	},
 	"list_expenses": {
@@ -58,7 +58,7 @@ var toolSpecs = map[string]toolSpec{
 	},
 	"clarify": {
 		description: "Ask only for missing or genuinely ambiguous information. Use amount for missing/ambiguous amounts, currency for explicit unsupported currencies. An unfamiliar description is not a reason to ask for an amount or category; use category другое. Never claim an operation succeeded.",
-		fields:      []string{"field", "request_context", "intent", "amount", "category", "spent_at", "comment", "currency", "id", "query", "previous_amount"},
+		fields:      []string{"field", "request_context", "intent", "amount", "amount_text", "category", "spent_at", "comment", "currency", "id", "query", "previous_amount"},
 		required:    []string{"field"},
 	},
 	"answer_clarification": {
@@ -105,6 +105,10 @@ func toolsForModel() []llm.Tool {
 			case "amount", "previous_amount":
 				property["pattern"] = `^(0|[1-9][0-9]{0,11})(\.[0-9]{1,2})?$`
 				property["description"] = "Exact positive RUB decimal string, 0.01..999999999999.99. Normalize a user comma separator to a period. No currency symbols, grouping, rounding or exponent notation."
+			case "comment":
+				property["description"] = "Expense description only, without the extracted price, its currency marker or price preposition. Preserve the user's language, meaningful words, product/model numbers and quantities. Never copy the whole message or invent a description. Omit or use null when absent. Explicit comment edits may retain any requested text."
+			case "amount_text":
+				property["description"] = "For creation, copy the exact price expression from the user's text, including за and RUB marker when present, e.g. 6050 or за 500 рублей. Must equal amount exactly; never include description words, model numbers or quantities. Supply whenever the source contains the price. Omit while its amount is unresolved."
 			case "currency":
 				property["enum"] = []string{"RUB"}
 				property["description"] = "Supported currency code, always RUB. An absent currency defaults to RUB; never clarify merely because no marker was given. For an explicit unsupported code, name or symbol, use clarify(field=currency)."

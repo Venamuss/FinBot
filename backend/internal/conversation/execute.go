@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -106,12 +107,24 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		if err != nil {
 			return operationError(ctx, expense.ValidationError{"spent_at": "invalid"})
 		}
+		source := text
+		if next.pending != nil {
+			source = next.pending.text + "\n" + text
+		}
+		comment, err := creationComment(operation, source)
+		if errors.Is(err, errDescription) {
+			next.pending = &pending{field: "request", text: source, reference: reference}
+			return clarificationQuestions["request"], nil
+		}
+		if err != nil {
+			return operationError(ctx, err)
+		}
 		item, err := expense.NewService(repo).Create(ctx, expense.Input{
 			UserID:   strconv.FormatInt(owner, 10),
 			Amount:   operation.value("amount"),
 			Category: operation.value("category"),
 			SpentAt:  date,
-			Comment:  operation.args["comment"],
+			Comment:  comment,
 		})
 		if err != nil {
 			return operationError(ctx, err)
