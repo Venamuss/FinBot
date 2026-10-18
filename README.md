@@ -4,12 +4,18 @@
 
 <a id="russian"></a>
 
-FinBot — приложение для учёта семейных расходов, которое объединяет ИИ-помощника в Telegram и панель управления на React. Члены семьи ведут свои расходы на естественном языке, а панель позволяет управлять расходами всей семьи через общий бэкенд на Go.
+**Учёт семейных расходов с ИИ-помощником**
+
+Записывайте и находите свои траты обычным текстом на русском языке в Telegram: LLM интерпретирует сообщения и вызывает инструменты, а бэкенд на Go проверяет и выполняет операции с данными в PostgreSQL. Панель на React позволяет просматривать и редактировать расходы всей семьи.
 
 ![Go 1.27.1](https://img.shields.io/badge/Go-1.27.1-00ADD8?logo=go&logoColor=white)
-[![CI настроен](https://img.shields.io/badge/GitHub_Actions-CI_configured-555?logo=githubactions&logoColor=white)](https://github.com/Venamuss/FinBot/actions/workflows/ci.yml)
+[![CI](https://github.com/Venamuss/FinBot/actions/workflows/ci.yml/badge.svg)](https://github.com/Venamuss/FinBot/actions/workflows/ci.yml)
+
+[Возможности](#ru-features) · [Скриншоты](#screenshots-gallery) · [Архитектура](#ru-architecture) · [Быстрый старт](#ru-quick-start) · [Тестирование](#ru-testing)
 
 [Исходное задание](docs/test-task-expenses.md) · [Требования](docs/requirements.md) · [Справочник API](docs/api.md) · [Отчёт о проверках и готовности к сдаче](docs/submission-readiness.md)
+
+<a id="ru-features"></a>
 
 ## Возможности
 
@@ -21,7 +27,35 @@ FinBot — приложение для учёта семейных расход�
 - **Настраиваемый ИИ:** один OpenAI-совместимый API с вызовом инструментов; провайдер по умолчанию — OpenRouter.
 - **Запуск через Docker:** nginx, Go, PostgreSQL, проверки готовности, автоматические миграции и постоянное хранение данных.
 
-Для воспроизводимой демонстрации пройдите [сценарий ручной приёмки](docs/submission-readiness.md#f-manual-acceptance-test). Скриншоты не включены в репозиторий; [инструкция по съёмке](docs/screenshots/README.md) описывает реальные снимки приложения на компьютере и телефоне с синтетическими данными.
+Для воспроизводимой демонстрации пройдите [сценарий ручной приёмки](docs/submission-readiness.md#f-manual-acceptance-test).
+
+<a id="screenshots-gallery"></a>
+
+## Скриншоты
+
+Реальная панель React с [демоданными](docs/demo-data.md): все участники, имена, Telegram ID и расходы вымышлены. / Real React panel with fictional members, names, Telegram IDs, and expenses.
+
+**Журнал расходов / Expense Dashboard** — все участники и последние траты. / All members and recent expenses.
+
+![FinBot: журнал расходов семьи с именами участников и разными категориями](docs/screenshots/dashboard.png)
+
+<details>
+<summary>Фильтрация расходов / Expense Filtering</summary>
+
+Анна, категория «еда», 10 совпадений. / Анна’s food-category filter, 10 matches.
+
+![FinBot: фильтрация расходов Анны по категории «еда»](docs/screenshots/expense-filters.png)
+
+</details>
+
+<details>
+<summary>Редактирование расхода / Expense Editing</summary>
+
+Существующий расход; форма закрыта без сохранения. / An existing expense; the form was closed without saving.
+
+![FinBot: форма редактирования расхода «Продукты на неделю»](docs/screenshots/expense-editing.png)
+
+</details>
 
 ## Технологии
 
@@ -35,6 +69,8 @@ FinBot — приложение для учёта семейных расход�
 | Тесты / CI | Тесты Go и детектор гонок, интеграционные тесты PostgreSQL, Vitest, Testing Library, jsdom; GitHub Actions |
 
 Версии указаны в [go.mod](backend/go.mod), [package.json](frontend/package.json) и [Compose](compose.yaml). В корне проекта нет файла лицензии; встроенный шрифт распространяется по отдельной [лицензии OFL](frontend/public/fonts/OFL.txt).
+
+<a id="ru-architecture"></a>
 
 ## Архитектура
 
@@ -53,6 +89,8 @@ flowchart LR
 ```
 
 REST и Telegram используют общие правила проверки расходов и хранения данных внутри модульного монолита на Go. При чтении и изменении расходов бот ограничивает SQL-запросы идентификатором владельца, полученным от доверенного отправителя. LLM предлагает действие; Go проверяет его аргументы и права доступа, а модель не имеет SQL- или административных инструментов. PostgreSQL хранит расходы, необязательные имена участников, историю миграций и зафиксированные результаты обработки Telegram. Подробнее — в [описании архитектуры](docs/architecture.md).
+
+<a id="ru-quick-start"></a>
 
 ## Быстрый старт
 
@@ -173,6 +211,8 @@ docker compose down
 
 ID и суммы передаются в JSON **строками**; `spent_at` — календарная дата (`YYYY-MM-DD`). Фильтры объединяются через AND; границы дат включаются в период. Форматы ответов, категории, проверки, ограничения и ошибки описаны в [REST-контракте](docs/api.md). `/readyz` — внутренний эндпоинт приложения, недоступный через REST-прокси.
 
+<a id="ru-testing"></a>
+
 ## Разработка и тестирование
 
 Используйте Go 1.27.1 и Node.js 24/npm. Из корня репозитория:
@@ -223,7 +263,7 @@ TZ=America/Los_Angeles npm test -- src/validation.test.ts
 TZ=Pacific/Kiritimati npm test -- src/validation.test.ts
 ```
 
-[Процесс CI](.github/workflows/ci.yml) проверяет форматирование и vet, полный набор тестов Go с детектором гонок и PostgreSQL 17, тесты и сборку фронтенда с проверкой типов, часовые пояса, оба Docker-образа, запуск Compose и сохранность REST-данных после перезапуска и пересоздания контейнеров. Для HEAD `d18e5a7` подтверждён [успешный запуск CI](https://github.com/Venamuss/FinBot/actions/runs/39154509084); финальные незакоммиченные изменения проверены локально и требуют нового CI после push. Значок означает только наличие конфигурации. Фактические локальные результаты и оставшиеся ручные проверки указаны в [отчёте QA](docs/submission-readiness.md).
+[Процесс CI](.github/workflows/ci.yml) проверяет форматирование и vet, полный набор тестов Go с детектором гонок и PostgreSQL 17, тесты и сборку фронтенда с проверкой типов, часовые пояса, оба Docker-образа, запуск Compose и сохранность REST-данных после перезапуска и пересоздания контейнеров. Для HEAD `d18e5a7` подтверждён [успешный запуск CI](https://github.com/Venamuss/FinBot/actions/runs/39154509084); финальные незакоммиченные изменения проверены локально и требуют нового CI после push. Значок CI показывает статус процесса в GitHub Actions. Фактические локальные результаты и оставшиеся ручные проверки указаны в [отчёте QA](docs/submission-readiness.md).
 
 ## Безопасность
 
@@ -278,12 +318,20 @@ compose.yaml             Локальное развёртывание из тр
 
 # FinBot
 
-FinBot is a family expense management application combining a Telegram AI assistant with a React administration panel. Family members track their own expenses in natural language; the panel manages expenses across the family through a shared Go backend.
+[Русский](#russian) · [English](#english)
+
+**AI-powered Family Expense Tracker**
+
+Record and find your expenses in Telegram using natural-language Russian messages. An LLM interprets messages and calls tools; the Go backend validates and executes operations against PostgreSQL. A React dashboard lets you review and edit expenses across the family.
 
 ![Go 1.27.1](https://img.shields.io/badge/Go-1.27.1-00ADD8?logo=go&logoColor=white)
-[![CI configured](https://img.shields.io/badge/GitHub_Actions-CI_configured-555?logo=githubactions&logoColor=white)](https://github.com/Venamuss/FinBot/actions/workflows/ci.yml)
+[![CI](https://github.com/Venamuss/FinBot/actions/workflows/ci.yml/badge.svg)](https://github.com/Venamuss/FinBot/actions/workflows/ci.yml)
+
+[Features](#en-features) · [Screenshots](#en-screenshots) · [Architecture](#en-architecture) · [Quick Start](#en-quick-start) · [Testing](#en-testing)
 
 [Original assignment](docs/test-task-expenses.md) · [Requirements](docs/requirements.md) · [API reference](docs/api.md) · [QA and submission report](docs/submission-readiness.md)
+
+<a id="en-features"></a>
 
 ## Features
 
@@ -295,7 +343,13 @@ FinBot is a family expense management application combining a Telegram AI assist
 - **Configurable AI:** one OpenAI-compatible endpoint with tool calling; OpenRouter is the default provider.
 - **Docker startup:** nginx, Go, PostgreSQL, readiness checks, automatic migrations, and persistent storage.
 
-For a reproducible demonstration, follow the [manual acceptance scenario](docs/submission-readiness.md#f-manual-acceptance-test). Screenshots are not bundled; see [capture guidance](docs/screenshots/README.md) for real desktop/mobile captures using synthetic data.
+For a reproducible demonstration, follow the [manual acceptance scenario](docs/submission-readiness.md#f-manual-acceptance-test).
+
+<a id="en-screenshots"></a>
+
+## Screenshots
+
+[View the shared screenshot gallery](#screenshots-gallery) for the dashboard, expense filtering, and editing, with bilingual captions. All members, names, Telegram IDs, and expenses are [fictional demo data](docs/demo-data.md).
 
 ## Tech stack
 
@@ -309,6 +363,8 @@ For a reproducible demonstration, follow the [manual acceptance scenario](docs/s
 | Tests / CI | Go tests and race detector, PostgreSQL integration tests, Vitest, Testing Library, jsdom; GitHub Actions |
 
 Versions come from [go.mod](backend/go.mod), [package.json](frontend/package.json), and [Compose](compose.yaml). There is no root project license file; the bundled font has its own [OFL license](frontend/public/fonts/OFL.txt).
+
+<a id="en-architecture"></a>
 
 ## Architecture
 
@@ -327,6 +383,8 @@ flowchart LR
 ```
 
 REST and Telegram share expense validation and persistence inside a modular Go monolith. Bot reads and writes enforce the trusted sender's owner ID in SQL. The LLM proposes an action; Go validates its arguments and permissions, and the model has no SQL or administrative tools. PostgreSQL stores expenses, optional member names, migration history, and committed Telegram results. See [architecture details](docs/architecture.md).
+
+<a id="en-quick-start"></a>
 
 ## Quick start
 
@@ -447,6 +505,8 @@ In the panel, use **«Добавить расход»**, row edit/delete actions
 
 IDs and amounts are JSON **strings**; `spent_at` is a calendar date (`YYYY-MM-DD`). Filters combine with AND; date boundaries are inclusive. See the [REST contract](docs/api.md) for envelopes, categories, validation, limits, and errors. `/readyz` is an internal app endpoint and is not exposed through the REST proxy.
 
+<a id="en-testing"></a>
+
 ## Development and testing
 
 Use Go 1.27.1 and Node.js 24/npm. From the repository root:
@@ -497,7 +557,7 @@ TZ=America/Los_Angeles npm test -- src/validation.test.ts
 TZ=Pacific/Kiritimati npm test -- src/validation.test.ts
 ```
 
-The [CI workflow](.github/workflows/ci.yml) checks formatting/vet, the complete race-enabled Go suite with PostgreSQL 17, frontend tests/typecheck/build, timezone tests, both Docker images, Compose startup, and REST persistence across restart and recreation. A [successful CI run](https://github.com/Venamuss/FinBot/actions/runs/39154509084) is verified for HEAD `d18e5a7`; the final uncommitted polish has local verification and needs a new CI run after push. The badge indicates configuration only. See the [QA report](docs/submission-readiness.md) for actual local results and current acceptance status.
+The [CI workflow](.github/workflows/ci.yml) checks formatting/vet, the complete race-enabled Go suite with PostgreSQL 17, frontend tests/typecheck/build, timezone tests, both Docker images, Compose startup, and REST persistence across restart and recreation. A [successful CI run](https://github.com/Venamuss/FinBot/actions/runs/39154509084) is verified for HEAD `d18e5a7`; the final uncommitted polish has local verification and needs a new CI run after push. The CI badge shows the workflow status in GitHub Actions. See the [QA report](docs/submission-readiness.md) for actual local results and current acceptance status.
 
 ## Security notes
 
