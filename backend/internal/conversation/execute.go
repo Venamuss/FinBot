@@ -33,7 +33,8 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 	if next.pending != nil && (operation.name == "update_expense" || operation.name == "delete_expense") && next.pending.action.name != operation.name {
 		return rejectStateTool(ctx, next, operation.name), nil
 	}
-	if next.pending != nil && operation.name == "update_expense" && next.pending.action.name == "update_expense" {
+	if next.pending != nil && operation.name == "update_expense" && next.pending.action.name == "update_expense" &&
+		contains([]string{"amount", "category", "spent_at", "currency"}, next.pending.field) {
 		value := operation.args[next.pending.field]
 		if value == nil {
 			return rejectStateTool(ctx, next, operation.name), nil
@@ -56,7 +57,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		}
 		operation, reference = planned, dateReference
 	} else if next.pending != nil && operation.value("request_context") == "followup" &&
-		(operation.name == "create_expense" || operation.name == "update_expense") {
+		(operation.name == "create_expense" || operation.name == "update_expense" || operation.name == "delete_expense") {
 		if next.pending.action.name != "" && next.pending.action.name != operation.name {
 			return rejectStateTool(ctx, next, operation.name), nil
 		}
@@ -65,7 +66,20 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 			currency := "RUB"
 			operation.args["currency"] = &currency
 		}
-		operation = mergeDraft(next.pending.action, operation, next.pending.field)
+		if next.pending.field == "target" && next.pending.action.name != "" {
+			// A target answer selects a record; it cannot add new patch fields.
+			draft := copyAction(next.pending.action)
+			delete(draft.args, "id")
+			delete(draft.args, "query")
+			for _, field := range []string{"id", "query", "request_context"} {
+				if value := operation.args[field]; value != nil {
+					draft.args[field] = value
+				}
+			}
+			operation = draft
+		} else {
+			operation = mergeDraft(next.pending.action, operation, next.pending.field)
+		}
 	}
 
 	// Check source currency even when the model omits or mislabels it.
@@ -203,11 +217,15 @@ func (orchestrator *Orchestrator) filter(operation action, reference time.Time) 
 
 func (orchestrator *Orchestrator) updateInput(operation action, reference time.Time) (expense.OwnerUpdateInput, error) {
 	_, commentSet := operation.args["comment"]
+	comment := operation.args["comment"]
+	if comment != nil && *comment == "" {
+		comment = nil
+	}
 
 	input := expense.OwnerUpdateInput{
 		Amount:     operation.args["amount"],
 		Category:   operation.args["category"],
-		Comment:    operation.args["comment"],
+		Comment:    comment,
 		CommentSet: commentSet,
 	}
 
@@ -243,13 +261,32 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 	}
 
 	candidates, err := selectExpenses(ctx, service, owner, operation, next.focus)
+	lookupLogger := observability.Logger(ctx, "conversation", "resolve_expense").With("tool", operation.name, "state_type", next.stateType())
 	if err != nil {
+		outcome := "failed"
+		if errors.Is(err, expense.ErrNotFound) {
+			outcome = "missing_or_stale"
+		}
+		lookupLogger.InfoContext(ctx, "Expense lookup completed", "lookup_outcome", outcome)
 		next.focus = nil
 		next.pending = nil
 		return operationError(ctx, err)
 	}
 
+	outcome := "unique"
 	if len(candidates) == 0 {
+		outcome = "missing"
+	} else if len(candidates) > 10 {
+		outcome = "too_many"
+	} else if len(candidates) > 1 {
+		outcome = "ambiguous"
+	} else if previous != 0 && candidates[0].Amount != previous {
+		outcome = "previous_amount_mismatch"
+	}
+	lookupLogger.InfoContext(ctx, "Expense lookup completed", "lookup_outcome", outcome)
+
+	if len(candidates) == 0 {
+		next.pending = nil
 		return "Траты не найдены.", nil
 	}
 	if len(candidates) > 10 {

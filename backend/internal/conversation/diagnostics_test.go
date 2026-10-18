@@ -110,3 +110,45 @@ func TestModelToolsMatchConversationStateAndCategoryDomain(t *testing.T) {
 		t.Fatal("clarification tools do not match the actual pending state")
 	}
 }
+
+func TestModificationDiagnosticsIdentifyFailureBoundaryWithoutContents(t *testing.T) {
+	var output bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewJSONHandler(&output, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() {
+		slog.SetDefault(previous)
+	})
+	orchestrator, model, _ := setup(t)
+	handle(t, orchestrator, model, 1, 101, "private-message 87654321", "create_expense", `{"amount":"87654321","spent_at":"today","comment":"private-comment"}`)
+	handle(t, orchestrator, model, 2, 101, "private-update", "update_expense", `{"amount":"87654322","comment":null}`)
+	handle(t, orchestrator, model, 3, 101, "private-invalid", "update_expense", `{"amount":87654322}`)
+	handle(t, orchestrator, model, 4, 101, "private-unknown", "private-tool", `{}`)
+	handle(t, orchestrator, model, 5, 101, "private-missing", "delete_expense", `{"query":"private-missing"}`)
+	handle(t, orchestrator, model, 6, 101, "private-invalid-id", "delete_expense", `{"id":"private-id"}`)
+	logs := output.String()
+	for _, secret := range []string{"private-", "87654321", "87654322", "pending_values", "pending_request"} {
+		if strings.Contains(logs, secret) {
+			t.Fatal("modification diagnostics exposed sensitive data")
+		}
+	}
+	seen := map[string]bool{}
+	for _, line := range strings.Split(strings.TrimSpace(logs), "\n") {
+		var record map[string]any
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatal(err)
+		}
+		if record["msg"] == "Conversation action selected" && record["tool"] == "update_expense" && record["tool_call_count"] == float64(1) && record["action_category"] == "update_expense" {
+			seen["selection"] = true
+		}
+		for _, field := range []string{"lookup_outcome", "validation_category"} {
+			if value, ok := record[field].(string); ok {
+				seen[value] = true
+			}
+		}
+	}
+	for _, value := range []string{"selection", "unique", "missing", "failed", "argument_type", "unknown_tool", "arguments"} {
+		if !seen[value] {
+			t.Fatal("missing safe modification diagnostic", value)
+		}
+	}
+}

@@ -36,6 +36,7 @@ func Load() (Config, error) {
 		DatabaseURL: os.Getenv("DATABASE_URL"),
 		HTTPAddr:    os.Getenv("HTTP_ADDR"),
 	}
+
 	if strings.TrimSpace(configuration.DatabaseURL) == "" {
 		return Config{}, errors.New("DATABASE_URL is required")
 	}
@@ -45,6 +46,7 @@ func Load() (Config, error) {
 	if configuration.HTTPAddr == "" {
 		configuration.HTTPAddr = "127.0.0.1:8080"
 	}
+
 	_, port, err := net.SplitHostPort(configuration.HTTPAddr)
 	if err != nil {
 		return Config{}, errors.New("HTTP_ADDR must be host:port")
@@ -53,6 +55,7 @@ func Load() (Config, error) {
 	if err != nil || strings.Trim(port, "0123456789") != "" || portNumber < 1 || portNumber > 65535 {
 		return Config{}, errors.New("HTTP_ADDR must contain a numeric port from 1 to 65535")
 	}
+
 	switch strings.ToUpper(os.Getenv("LOG_LEVEL")) {
 	case "", "INFO":
 		configuration.LogLevel = slog.LevelInfo

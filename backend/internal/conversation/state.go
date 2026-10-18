@@ -83,7 +83,7 @@ func cancelPending(ctx context.Context, text string, next *state) string {
 		return rejectStateTool(ctx, next, "cancel_request")
 	}
 	next.pending = nil
-	return "Выбор отменён. Укажите нужное действие."
+	return "Выбор отменён."
 }
 
 func rejectStateTool(ctx context.Context, next *state, tool string) string {

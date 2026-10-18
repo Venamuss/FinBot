@@ -335,7 +335,7 @@ func TestStrictToolValidation(t *testing.T) {
 	cases := []llm.Response{
 		tool("sql", `{}`), tool("create_expense", `{"amount":"1","category":"еда"}`),
 		tool("delete_expense", `{"user_id":"202"}`), tool("delete_expense", `{"id":2}`),
-		tool("delete_expense", `{"id":null}`), tool("delete_expense", `{"id":"1","id":"2"}`),
+		tool("update_expense", `{"amount":123}`), tool("delete_expense", `{"id":"1","id":"2"}`),
 		tool("delete_expense", `{"id":"1","query":"такси"}`), tool("delete_expense", `[]`),
 		tool("delete_expense", `{} {}`), tool("delete_expense", `{"id":""}`),
 		{FinishReason: "stop"},
