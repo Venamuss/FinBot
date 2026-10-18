@@ -1,9 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   changedFields,
   formInput,
   validateForm,
   validDate,
+  today,
+  displayDate,
+  displayAmount,
 } from "./validation";
 import type { FormValues } from "./validation";
 import type { Expense } from "./api";
@@ -17,6 +20,28 @@ const valid: FormValues = {
 };
 
 describe("API contract validation", () => {
+  it.each(["0.10", "0.20", "999999999999.99"])(
+    "preserves exact amount %s through form serialization and display",
+    (amount) => {
+      const input = formInput({ ...valid, amount });
+      expect(JSON.parse(JSON.stringify(input)).amount).toBe(amount);
+      expect(displayAmount(amount).replaceAll("\u00a0", "")).toBe(
+        amount.replace(".", ","),
+      );
+    },
+  );
+
+  it("defaults to the browser calendar at midnight and displays dates without conversion", () => {
+    vi.useFakeTimers();
+    try {
+      // CI also runs this suite in zones on opposite sides of UTC.
+      vi.setSystemTime(new Date(2026, 0, 1, 0, 30));
+      expect(today()).toBe("2026-01-01");
+      expect(displayDate("2024-02-29")).toBe("29.02.2024");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
   it.each([
     "0",
     "0.00",

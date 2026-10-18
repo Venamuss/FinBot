@@ -74,8 +74,11 @@ func run() error {
 
 	repository := postgres.New(pool)
 	service := expense.NewService(repository)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /readyz", readinessHandler(pool.Ping))
+	mux.Handle("/", httpapi.New(service, configuration.HTTPRequestTimeout))
 	server := &http.Server{
-		Handler:           httpapi.New(service, configuration.HTTPRequestTimeout),
+		Handler:           mux,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       10 * time.Second,
 		WriteTimeout:      15 * time.Second,

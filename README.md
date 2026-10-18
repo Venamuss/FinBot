@@ -16,7 +16,9 @@ docker compose up -d --build --wait
 curl http://127.0.0.1:8080/api/expenses
 ```
 
-Пароль для Compose должен состоять из URL-safe символов (буквы, цифры, `-`, `_`): он включается в URI подключения. `.env` не коммитится. Compose запускает `frontend` (React, собранный Vite и раздаваемый nginx), `app` (Go REST и Telegram) и `db`. nginx проксирует `/api` в Go с исходным Host: браузер работает с одним origin, CORS не нужен. Go-образ и API-контракт не изменены. Миграции встроены в Go-бинарник и выполняются через Goose до открытия HTTP-порта; каждая миграция и запись её версии применяются транзакционно. Повторный запуск не применяет завершённые миграции заново, одновременные запуски защищены advisory lock.
+Пароль для Compose должен состоять из URL-safe символов (буквы, цифры, `-`, `_`): он включается в URI подключения. `.env` не коммитится. Compose запускает `frontend` (React, собранный Vite и раздаваемый nginx), `app` (Go REST и Telegram) и `db`. nginx проксирует `/api` в Go с исходным Host: браузер работает с одним origin, CORS не нужен. Миграции встроены в Go-бинарник и выполняются через Goose до открытия HTTP-порта; каждая миграция и запись её версии применяются транзакционно. Повторный запуск не применяет завершённые миграции заново, одновременные запуски защищены advisory lock.
+
+Compose ожидает готовности PostgreSQL, затем приложения, затем nginx. Внутренний `GET /readyz` приложения проверяет PostgreSQL с дедлайном 2 секунды: `204` при доступной БД, безопасный `503` при сбое. Проверка доступна после миграций и не проксируется nginx. Это readiness, а не liveness: сбой БД делает `app` unhealthy, но сам по себе не перезапускает контейнер. Healthcheck frontend проверяет раздачу страницы nginx. LLM и Telegram не входят в readiness: их недоступность не мешает панели. Проверить приложение внутри Compose: `docker compose exec -T app wget -q -O /dev/null http://127.0.0.1:8080/readyz`.
 
 SQL-файлы в `backend/migrations/` используют числовые версии и секции `-- +goose Up` / `-- +goose Down`. Приложение автоматически выполняет только Up; Down первой миграции удаляет таблицу расходов. История Goose хранится в `goose_db_version`. При обновлении с прежнего runner начальная миграция сохраняет существующие `expenses`, индекс и данные через `IF NOT EXISTS`; прежняя `schema_migrations` остаётся нетронутой и больше не используется. Такой переход рассчитан на исходную схему FinBot, а не на вручную изменённые таблицы.
 
@@ -92,6 +94,14 @@ JSON-логи идут в stdout через `log/slog`. DEBUG содержит �
 
 ## Разработка и проверки
 
+[GitHub Actions CI](.github/workflows/ci.yml) запускается при push в `master` и pull request в `master`, с правом `contents: read`:
+
+- `backend`: Go из `backend/go.mod` (сейчас 1.27.1), кеш модулей/сборки, проверка gofmt, `go vet` и `go test -race ./... -count=1 -timeout=180s`. PostgreSQL 17 работает в отдельном service container; `TEST_DATABASE_URL` задан обязательно. Весь набор включает миграции и Telegram pipeline с mock HTTP-сервисами.
+- `frontend`: Node.js 24, кеш npm, `npm ci` по lockfile, Vitest и `npm run build` (включает `typecheck`). Календарные тесты дополнительно работают в `America/Los_Angeles` и `Pacific/Kiritimati`. Lint-скрипта в проекте нет; новый инструмент не добавлен.
+- `containers`: валидация Compose, сборка обоих production-образов, запуск с healthchecks, REST smoke и проверка сохранности после restart и пересоздания контейнеров. Используются отдельный проект/том, синтетический пароль, пустой Telegram token и недоступный тестовый LLM URL; ключи, VPN и прокси разработчика не нужны. Тестовый том удаляется при завершении job.
+
+Наличие workflow не означает успешный прогон на GitHub: его результат нужно проверить после push/PR. Локально workflow можно проверить через `actionlint .github/workflows/ci.yml`, если actionlint установлен.
+
 Go 1.27.1 или новее; прямые зависимости — `pgx/v5` для PostgreSQL и `goose/v3` для миграций. Goose использует адаптер `database/sql` поверх существующего `pgxpool`, отдельный драйвер БД не добавляется. Из `backend/`:
 
 ```sh
@@ -103,11 +113,11 @@ DATABASE_URL='postgres://user:password@host:5432/finbot?sslmode=disable' go run 
 
 `DATABASE_URL` обязателен. `HTTP_ADDR` по умолчанию `127.0.0.1:8080`; Compose задаёт `:8080` внутри контейнера. Запуск ожидает БД и применяет миграции в пределах общего `STARTUP_TIMEOUT` (по умолчанию 30 секунд); при неуспехе процесс завершается до приёма запросов. SIGTERM/SIGINT останавливают HTTP с ожиданием активных запросов до 10 секунд, отменяют Telegram polling и внешние запросы; после остановки обработчиков закрывается пул БД.
 
-Без `TEST_DATABASE_URL` тесты repository явно пропускаются. Для реальной интеграционной проверки задайте адрес тестовой PostgreSQL и выполните из `backend/`:
+Без `TEST_DATABASE_URL` тесты PostgreSQL и Telegram pipeline явно пропускаются. Для полной проверки задайте адрес отдельной тестовой PostgreSQL и выполните из `backend/` (race detector требует CGO и C-компилятор):
 
 ```sh
 TEST_DATABASE_URL='postgres://user:password@host:5432/testdb?sslmode=disable' \
-  go test ./internal/postgres -run Integration -count=1 -v
+  go test -race ./... -count=1 -timeout=180s
 ```
 
 Тестовый пользователь должен иметь право создавать схемы. Тесты создают отдельные случайные схемы и удаляют только их. Проверяются чистое и повторное применение миграций, одновременный запуск Goose, переход с прежней схемы с сохранением расходов и Down/Up в изолированной тестовой схеме. Существующие таблицы не очищаются. Адрес БД Compose можно использовать из Go-контейнера в той же сети без публикации PostgreSQL. Например, из корня проекта для стандартного имени Compose-проекта `finbot` (замените `test-password` на пароль тестовой установки):

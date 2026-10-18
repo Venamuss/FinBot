@@ -359,6 +359,56 @@ describe("expense journal", () => {
     expect(screen.queryByText("Расход добавлен.")).toBeNull();
   });
 
+  it("blocks repeated submissions while saving and retains input after a network failure", async () => {
+    let fail!: (error: Error) => void;
+    handler = (_url, init) =>
+      init.method === "POST"
+        ? new Promise((_resolve, reject) => {
+            fail = reject;
+          })
+        : undefined;
+    render(<App />);
+    const dialog = await fillCreate();
+    const form = dialog
+      .getByRole("button", { name: "Добавить расход" })
+      .closest("form")!;
+    fireEvent.submit(form);
+    expect(dialog.getByRole("button", { name: "Сохраняем…" })).toHaveProperty(
+      "disabled", true,
+    );
+    expect(dialog.getByRole("button", { name: "Отмена" })).toHaveProperty(
+      "disabled", true,
+    );
+    fireEvent.submit(form);
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(1);
+
+    await act(async () => fail(new TypeError("offline")));
+    expect(
+      await dialog.findByText(/Не удалось связаться с сервером/),
+    ).toBeTruthy();
+    expect(dialog.getByLabelText("Сумма *")).toHaveProperty(
+      "value", "999999999999.99",
+    );
+    expect(dialog.getByLabelText("Дата расхода *")).toHaveProperty(
+      "value", "2024-02-29",
+    );
+    expect(dialog.getByRole("button", { name: "Добавить расход" })).toHaveProperty(
+      "disabled", false,
+    );
+    expect(screen.queryByText("Расход добавлен.")).toBeNull();
+
+    handler = undefined;
+    await userEvent.click(
+      dialog.getByRole("button", { name: "Добавить расход" }),
+    );
+    await screen.findByText("Расход добавлен.");
+    expect(
+      fetchMock.mock.calls.filter(([, init]) => init?.method === "POST"),
+    ).toHaveLength(2);
+  });
+
   it("requires confirmation, supports cancel, then deletes and refreshes", async () => {
     render(<App />);
     const remove = await screen.findByRole("button", {

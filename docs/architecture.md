@@ -132,6 +132,7 @@ Ownership and record freshness based on `updated_at` are checked atomically with
 
 - Publish only the frontend reverse proxy's HTTP port on the trusted local network. PostgreSQL stays within Compose and uses a named volume.
 - Apply migrations before starting the handlers.
+- Internal `GET /readyz` checks PostgreSQL with a two-second deadline after migrations: empty 204 when available, generic 503 otherwise. Compose waits for this readiness check before starting nginx; nginx has a separate static-page healthcheck. Dependency failure marks the app unhealthy without restarting it. Telegram/LLM availability is not required for panel readiness, and nginx does not proxy this operational endpoint.
 - In addition to the LLM and allowlist, configure the database connection, Telegram token, time zone, and HTTP port.
 - Store secrets in `.env`; `.env.example` contains templates only.
 - Bound external requests with timeouts. An LLM failure does not prevent the panel from working.

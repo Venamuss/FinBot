@@ -212,3 +212,55 @@ func TestPollingRetryLoggingPreservesOffset(t *testing.T) {
 		t.Fatal("sensitive data leaked into polling logs")
 	}
 }
+
+func TestPollingFailureWaitsBeforeRecovery(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	const retryDelay = 30 * time.Millisecond
+	var failedAt time.Time
+	polls := 0
+	api := loggingAPI{updates: func(ctx context.Context, offset int64) ([]Update, error) {
+		polls++
+		if offset != 0 {
+			t.Fatal("failed poll advanced the offset")
+		}
+		if polls == 1 {
+			failedAt = time.Now()
+			return nil, errors.New("transient network failure")
+		}
+		if time.Since(failedAt) < retryDelay {
+			t.Fatal("polling retried without waiting")
+		}
+		cancel()
+		return nil, ctx.Err()
+	}}
+	bot := NewBot(api, nil, nil)
+	if err := bot.Run(ctx, retryDelay); !errors.Is(err, context.Canceled) || polls != 2 {
+		t.Fatalf("polling did not recover and stop: polls=%d error=%v", polls, err)
+	}
+}
+
+func TestPollingCancellationInterruptsRetryWait(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	failed := make(chan struct{})
+	api := loggingAPI{updates: func(context.Context, int64) ([]Update, error) {
+		close(failed)
+		return nil, errors.New("transient network failure")
+	}}
+	bot := NewBot(api, nil, nil)
+	stopped := make(chan error, 1)
+	go func() {
+		stopped <- bot.Run(ctx, time.Hour)
+	}()
+	<-failed
+	cancel()
+	select {
+	case err := <-stopped:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("cancellation did not interrupt the retry wait")
+	}
+}

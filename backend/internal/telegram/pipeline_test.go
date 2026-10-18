@@ -105,6 +105,7 @@ func TestPollingPipelineIntegration(t *testing.T) {
 		{name: "poll conflict retains offset and recovers", updates: []string{pipelineMessageA}, pollFailure: true, expenses: 1, results: 1, modelCalls: 1, sends: 1},
 		{name: "empty allowlist denies everyone", updates: []string{pipelineMessageA, pipelineMessageC}, emptyAllowed: true, sends: 2},
 		{name: "provider failure sends safe reply", updates: []string{pipelineMessageA}, modelFailure: true, results: 1, modelCalls: 1, sends: 1},
+		{name: "rate limit and delivery failure replay safe reply without model retry", updates: []string{pipelineMessageA}, rateLimit: true, sendFailure: true, results: 1, modelCalls: 1, sends: 2},
 		{name: "invalid tool sends clarification", updates: []string{pipelineMessageA}, invalidTool: true, results: 1, modelCalls: 1, sends: 1},
 	}
 	for _, test := range cases {
@@ -150,7 +151,7 @@ func TestPollingPipelineIntegration(t *testing.T) {
 					t.Fatalf("failed update acknowledged too early: %v", api.offsets)
 				}
 			}
-			if test.modelFailure && api.replies[0] != "Не удалось обратиться к модели. Повторите запрос новым сообщением." {
+			if (test.modelFailure || test.rateLimit) && api.replies[0] != "Не удалось обратиться к модели. Повторите запрос новым сообщением." {
 				t.Fatal("provider failure reply is not safe")
 			}
 			if test.invalidTool && api.replies[0] != "Не удалось определить действие. Уточните сумму, дату или нужную трату." {
@@ -221,6 +222,7 @@ type pipelineScenario struct {
 	pollFailure  bool
 	sendFailure  bool
 	modelFailure bool
+	rateLimit    bool
 	invalidTool  bool
 	expenses     int
 	results      int
@@ -245,8 +247,12 @@ func pipelineModel(t *testing.T, test pipelineScenario) (*llm.Client, *atomic.In
 			w.WriteHeader(http.StatusBadRequest)
 			return
 		}
-		if test.modelFailure {
-			w.WriteHeader(http.StatusServiceUnavailable)
+		if test.modelFailure || test.rateLimit {
+			status := http.StatusServiceUnavailable
+			if test.rateLimit {
+				status = http.StatusTooManyRequests
+			}
+			w.WriteHeader(status)
 			_, _ = w.Write([]byte("private-provider-body private-model-key"))
 			return
 		}

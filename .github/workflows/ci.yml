@@ -1,0 +1,123 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: finbot_test
+          POSTGRES_USER: finbot_test
+          POSTGRES_PASSWORD: disposable-ci-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U finbot_test -d finbot_test"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 30
+    env:
+      TEST_DATABASE_URL: postgres://finbot_test:disposable-ci-password@127.0.0.1:5432/finbot_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: backend/go.mod
+          cache-dependency-path: backend/go.sum
+      - name: Verify formatting
+        run: |
+          unformatted=$(gofmt -l cmd internal migrations)
+          if [ -n "$unformatted" ]; then
+            printf 'Run gofmt on:\n%s\n' "$unformatted"
+            exit 1
+          fi
+      - name: Go vet
+        run: go vet ./...
+      - name: Go tests with race detector and PostgreSQL
+        # Includes migrations and the Telegram pipeline, each in a random schema.
+        run: |
+          test -n "$TEST_DATABASE_URL"
+          go test -race ./... -count=1 -timeout=180s
+
+  frontend:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: npm ci --no-audit --no-fund
+      - run: npm test
+      - name: Calendar tests in western and eastern time zones
+        run: |
+          TZ=America/Los_Angeles npm test -- src/validation.test.ts
+          TZ=Pacific/Kiritimati npm test -- src/validation.test.ts
+      # The existing build script runs TypeScript checking before Vite.
+      - name: TypeScript check and production build
+        run: npm run build
+
+  containers:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      COMPOSE_PROJECT_NAME: finbot-ci
+      POSTGRES_PASSWORD: disposable-ci-password
+      HTTP_PORT: '18080'
+      HTTP_BIND_IP: 127.0.0.1
+      TELEGRAM_BOT_TOKEN: ''
+      TELEGRAM_ALLOWED_USER_IDS: ''
+      LLM_API_KEY: ''
+      LLM_BASE_URL: http://127.0.0.1:1/v1
+      HTTP_PROXY: ''
+      HTTPS_PROXY: ''
+      NO_PROXY: localhost,127.0.0.1,db
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Validate Compose
+        run: docker compose --env-file /dev/null config --quiet
+      - name: Build production images
+        run: docker compose --env-file /dev/null build
+      - name: Start disposable stack
+        run: docker compose --env-file /dev/null up -d --wait --wait-timeout 90
+      - name: REST smoke and persistence across restarts and recreation
+        run: |
+          python3 scripts/smoke.py --url http://127.0.0.1:18080 --state-file "$RUNNER_TEMP/finbot-smoke.json"
+          docker compose --env-file /dev/null restart
+          docker compose --env-file /dev/null up -d --wait --wait-timeout 90
+          python3 scripts/smoke.py --url http://127.0.0.1:18080 --state-file "$RUNNER_TEMP/finbot-smoke.json" --verify
+          docker compose --env-file /dev/null down
+          docker compose --env-file /dev/null up -d --wait --wait-timeout 90
+          python3 scripts/smoke.py --url http://127.0.0.1:18080 --state-file "$RUNNER_TEMP/finbot-smoke.json" --verify
+      - name: Clean up disposable containers and data
+        if: always()
+        run: docker compose --env-file /dev/null down --volumes --remove-orphans
