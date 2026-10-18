@@ -68,7 +68,7 @@ func TestProcessLogging(t *testing.T) {
 		{name: "allowed A", owner: 101, messages: []string{"Telegram update processing started", "Telegram update processing completed", "Telegram response delivered"}},
 		{name: "allowed B", owner: 202, messages: []string{"Telegram update processing started", "Telegram update processing completed", "Telegram response delivered"}},
 		{name: "denied C", owner: 303, messages: []string{"Telegram access denied"}},
-		{name: "denial delivery failure", owner: 303, sendErr: privateError, wantErr: privateError, messages: []string{"Telegram access denied", "Telegram denial delivery failed"}},
+		{name: "denial delivery failure", owner: 303, sendErr: privateError, messages: []string{"Telegram access denied", "Telegram denial delivery failed"}},
 		{name: "processing failure", owner: 101, handlerErr: privateError, wantErr: privateError, messages: []string{"Telegram update processing started", "Telegram update processing failed"}},
 		{name: "processing and notification failure", owner: 101, handlerErr: privateError, sendErr: privateError, wantErr: privateError, messages: []string{"Telegram update processing started", "Telegram update processing failed", "Telegram failure notification delivery failed"}},
 		{name: "response delivery failure", owner: 101, sendErr: privateError, wantErr: privateError, messages: []string{"Telegram update processing started", "Telegram update processing completed", "Telegram response delivery failed"}},

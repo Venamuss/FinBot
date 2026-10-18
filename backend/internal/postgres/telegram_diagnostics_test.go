@@ -195,6 +195,9 @@ func TestTelegramTransactionStagesIntegration(t *testing.T) {
 			if committed || !errors.As(err, &failure) || failure.stage != stage || strings.Contains(err.Error(), "private-") {
 				t.Fatal("transaction error lost its safe stage")
 			}
+			if errors.Is(err, conversation.ErrCommitUncertain) {
+				t.Fatal("known rejection was classified as an uncertain commit")
+			}
 			if stage == "begin" && !errors.Is(err, context.Canceled) {
 				t.Fatal("begin error lost cancellation identity")
 			}

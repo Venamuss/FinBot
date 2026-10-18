@@ -58,9 +58,11 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 		logger.WarnContext(ctx, "Telegram access denied")
 		err := bot.api.Send(ctx, message.Chat.ID, Denied)
 		if err != nil && ctx.Err() == nil {
-			logger.ErrorContext(ctx, "Telegram denial delivery failed", "error_category", errorCategory(err))
+			logger.ErrorContext(ctx, "Telegram denial delivery failed", "error_category", errorCategory(err),
+				"delivery_outcome", "best_effort_failed", "retryable", false)
 		}
-		return err
+		// Authorization is complete; denial delivery cannot hold the update queue.
+		return ctx.Err()
 	}
 
 	started := time.Now()
@@ -81,8 +83,20 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 	logger.InfoContext(ctx, "Telegram update processing completed", "duration_ms", time.Since(started).Milliseconds())
 
 	if err := bot.api.Send(ctx, message.Chat.ID, response); err != nil {
+		var failure *requestError
+		terminal := errors.As(err, &failure) && failure.terminalDelivery()
 		if ctx.Err() == nil {
-			logger.ErrorContext(ctx, "Telegram response delivery failed", "error_category", errorCategory(err))
+			outcome := "retry_pending"
+			if terminal {
+				outcome = "terminal"
+			}
+			logger.ErrorContext(ctx, "Telegram response delivery failed", "error_category", errorCategory(err),
+				"delivery_outcome", outcome, "retryable", !terminal)
+		}
+		if terminal {
+			// The handler committed its result. A rejected send cannot undo that
+			// transaction, and replay still protects against duplicate mutation.
+			return ctx.Err()
 		}
 		return err
 	}
@@ -114,10 +128,11 @@ func (bot *Bot) Run(ctx context.Context, retryDelay time.Duration) error {
 		if err != nil {
 			// Keep the unacknowledged update for retry, including failed delivery after
 			// commit. The handler must replay its stored result without another mutation.
+			delay := retryDelayFor(err, retryDelay)
 			if ctx.Err() == nil {
-				logger.WarnContext(ctx, "Telegram polling retry scheduled", "offset", offset, "retry_delay", retryDelay, "error_category", errorCategory(err))
+				logger.WarnContext(ctx, "Telegram polling retry scheduled", "offset", offset, "retry_delay", delay, "error_category", errorCategory(err))
 			}
-			if err := wait(ctx, retryDelay); err != nil {
+			if err := wait(ctx, delay); err != nil {
 				return err
 			}
 		}

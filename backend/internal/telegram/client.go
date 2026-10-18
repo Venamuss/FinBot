@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/Venamuss/FinBot/internal/observability"
@@ -20,6 +21,7 @@ type requestError struct {
 	reason     string
 	httpStatus int
 	apiCode    int
+	retryAfter time.Duration
 }
 
 func (err *requestError) Error() string {
@@ -28,6 +30,23 @@ func (err *requestError) Error() string {
 
 func (err *requestError) Unwrap() error {
 	return ErrAPI
+}
+
+func (err *requestError) terminalDelivery() bool {
+	if err.httpStatus == 429 || err.httpStatus >= 500 || err.apiCode == 429 || err.apiCode >= 500 {
+		return false
+	}
+
+	// Only explicit send rejections are terminal. Authentication, routing,
+	// malformed responses and unknown failures retain the conservative retry path.
+	switch err.reason {
+	case "http_status":
+		return err.httpStatus == 400 || err.httpStatus == 403
+	case "api_error":
+		return err.apiCode == 400 || err.apiCode == 403
+	default:
+		return false
+	}
 }
 
 type Update struct {
@@ -127,7 +146,8 @@ func (client *Client) call(ctx context.Context, method string, input, output any
 		if !retry || attempt == 2 {
 			return err
 		}
-		if err := wait(ctx, client.retryDelay*time.Duration(1<<attempt)); err != nil {
+		delay := retryDelayFor(err, client.retryDelay*time.Duration(1<<attempt))
+		if err := wait(ctx, delay); err != nil {
 			return err
 		}
 	}
@@ -153,10 +173,27 @@ func (client *Client) request(ctx context.Context, method string, body []byte, o
 	}
 	defer response.Body.Close()
 
-	if response.StatusCode != http.StatusOK {
-		return response.StatusCode == 429 || response.StatusCode >= 500, &requestError{reason: "http_status", httpStatus: response.StatusCode}
-	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (1<<20)+1))
+	var envelope struct {
+		OK         bool            `json:"ok"`
+		Result     json.RawMessage `json:"result"`
+		ErrorCode  int             `json:"error_code"`
+		Parameters struct {
+			RetryAfter int64 `json:"retry_after"`
+		} `json:"parameters"`
+	}
+	if response.StatusCode != http.StatusOK {
+		failure := &requestError{reason: "http_status", httpStatus: response.StatusCode}
+		var seconds int64
+		if err == nil && len(data) <= 1<<20 && json.Unmarshal(data, &envelope) == nil {
+			failure.apiCode = envelope.ErrorCode
+			seconds = envelope.Parameters.RetryAfter
+		}
+		failure.retryAfter = responseRetryAfter(response.Header.Get("Retry-After"), seconds)
+		retry := response.StatusCode == 429 || response.StatusCode >= 500 || failure.apiCode == 429 || failure.apiCode >= 500
+		return retry, failure
+	}
+
 	if err != nil {
 		reason := "response_read"
 		var networkError net.Error
@@ -168,16 +205,14 @@ func (client *Client) request(ctx context.Context, method string, body []byte, o
 	if len(data) > 1<<20 {
 		return false, &requestError{reason: "response_too_large", httpStatus: response.StatusCode}
 	}
-	var envelope struct {
-		OK        bool            `json:"ok"`
-		Result    json.RawMessage `json:"result"`
-		ErrorCode int             `json:"error_code"`
-	}
 	if json.Unmarshal(data, &envelope) != nil {
 		return false, &requestError{reason: "invalid_response", httpStatus: response.StatusCode}
 	}
 	if !envelope.OK {
-		return envelope.ErrorCode == 429 || envelope.ErrorCode >= 500, &requestError{reason: "api_error", httpStatus: response.StatusCode, apiCode: envelope.ErrorCode}
+		return envelope.ErrorCode == 429 || envelope.ErrorCode >= 500, &requestError{
+			reason: "api_error", httpStatus: response.StatusCode, apiCode: envelope.ErrorCode,
+			retryAfter: responseRetryAfter(response.Header.Get("Retry-After"), envelope.Parameters.RetryAfter),
+		}
 	}
 	if len(envelope.Result) == 0 || bytes.Equal(envelope.Result, []byte("null")) {
 		return false, &requestError{reason: "invalid_response", httpStatus: response.StatusCode}
@@ -186,6 +221,33 @@ func (client *Client) request(ctx context.Context, method string, body []byte, o
 		return false, &requestError{reason: "invalid_response", httpStatus: response.StatusCode}
 	}
 	return false, nil
+}
+
+// Telegram supplies retry_after in seconds. Also accept the standard header;
+// neither untrusted value may overflow a duration or reduce the normal backoff.
+func responseRetryAfter(header string, seconds int64) time.Duration {
+	var delay time.Duration
+	if seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {
+		delay = time.Duration(seconds) * time.Second
+	}
+
+	if headerSeconds, err := strconv.ParseInt(header, 10, 64); err == nil {
+		if headerSeconds > 0 && headerSeconds <= int64((1<<63-1)/time.Second) {
+			delay = max(delay, time.Duration(headerSeconds)*time.Second)
+		}
+	} else if date, err := http.ParseTime(header); err == nil {
+		delay = max(delay, time.Until(date))
+	}
+
+	return delay
+}
+
+func retryDelayFor(err error, base time.Duration) time.Duration {
+	var failure *requestError
+	if errors.As(err, &failure) {
+		return max(base, failure.retryAfter)
+	}
+	return base
 }
 
 func wait(ctx context.Context, delay time.Duration) error {

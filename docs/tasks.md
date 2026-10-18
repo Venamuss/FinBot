@@ -940,3 +940,113 @@ Optional/manual checks not executed: live Telegram acceptance, live cloud/local
 LLM calls and interactive browser testing. No paid LLM requests or automatic Git
 commits were made. Existing tests were reused without adding implementation-
 mirroring tests because the task introduces no behavior change.
+
+## Final Review P1 Reliability Fixes (F1/F2) — 2026-10-18
+
+Fixed only F1 and F2 from [FINAL_CODE_REVIEW.md](FINAL_CODE_REVIEW.md). No monetary
+interpretation, frontend behavior, provider/model, dependency, schema, formatting
+or ownership policy changes. F3/F4 and the outstanding live MVP acceptance remain
+outside this increment. The review report itself is preserved as the historical
+assessment of revision `4284e02`.
+
+F1 root cause and recovery:
+
+- A committed cancellation with a lost acknowledgement left the pre-transaction
+  deletion confirmation in memory; replay returned before publishing any state.
+- `conversation.ErrCommitUncertain` now makes the Store error contract explicit.
+  PostgreSQL commit transport/unknown-completion failures match it; confirmed
+  server rejections, rollback tags and failures before sending COMMIT do not.
+  Existing transaction isolation, SQL ownership/version predicates, retry rules
+  and atomic expense/result persistence are unchanged.
+- An uncertain outcome invalidates only that owner's transient state, including
+  reply-only transactions. A known rollback retains the prior state and cannot
+  return success. Durable replies still replay by update ID; ordinary replay
+  does not invalidate newer state. No conversation persistence was introduced.
+- New unit tests inspect both owners' actual state. The PostgreSQL regression
+  commits cancellation for real, injects a production-classified acknowledgement
+  error at the Store boundary, checks its saved result, replays it, sends `да`,
+  and proves the expense survives. Both newer A and existing B clarifications
+  remain usable and produce the expected SQL rows. Physical socket interruption
+  at COMMIT is not claimed. Existing deferred-trigger rollback tests also pass.
+
+F2 root cause and delivery policy:
+
+- Every send failure formerly propagated to polling without advancing its offset,
+  including permanently undeliverable access-denied responses.
+- Denial delivery is best-effort. After committed processing, explicit HTTP/API
+  400/403 send rejections log a terminal outcome and allow acknowledgement.
+  Unknown failures, configuration/authentication errors, network failures,
+  429 and 5xx retain the conservative retry path. A failed handler remains
+  retryable even if sending its waiting notice receives a terminal rejection.
+- Request attempts remain bounded at three; normal exponential backoff and the
+  polling delay take the larger of their configured delay and valid Telegram
+  `parameters.retry_after`/HTTP `Retry-After` guidance. Invalid/overflowing hints
+  cannot wrap durations; waits respect cancellation. No outbox was added.
+- New real-PostgreSQL/mock-HTTP polling regressions cover denied C before allowed
+  A, terminal sends before B, repeated update replay, exhausted transient 503 and
+  429 delivery retries, actual rate-limit wait intervals, and a database trigger
+  rejecting the first expense INSERT. The latter checks that no expense/result
+  persisted before retry, even when its error notice receives 403. Diagnostics
+  tests reject private payloads and require safe outcome/retryability metadata.
+
+Regression mapping: A (normal cancellation), B (uncertain cancellation), C (old
+replay/new clarification) and E (owner isolation) are covered by
+`TestCancellationCommitRecovery` and
+`TestCancellationUncertainCommitRecoveryIntegration`; D (known rollback) by
+existing `TestFailedCancellationPreservesPendingState`,
+`TestCancellationCommitFailureIntegration`, and the strengthened transaction-stage
+checks. F–J are covered by `TestDeliveryPollingRecoveryIntegration`, with separate
+terminal-classification, retry-after metadata/overflow and cancellation tests.
+
+Checks actually executed (Go commands from `backend/`):
+
+| Check | Result |
+|---|---|
+| `gofmt -w` on changed Go files; `gofmt -l cmd internal migrations`; final `gofmt -l backend` from root | Passed; final formatting listings empty |
+| `go vet ./...` | Passed |
+| Initial focused cancellation/transaction/API run | F1 tests passed; `TestProcessLogging/denial_delivery_failure` failed because its old expectation propagated the denial error. Updated this expectation to the required best-effort behavior; later targeted and full runs passed |
+| Focused race-enabled command below | Passed: conversation, PostgreSQL and Telegram packages, including cancellation, transaction outcomes, delivery, retry-after and existing wire-pipeline tests |
+| `TEST_DATABASE_URL='postgres://finbot_test:disposable-test-password@127.0.0.1:18746/finbot_test?sslmode=disable' go test -json ./... -count=1 -timeout=180s` | Passed: **1,097 tests/subtests, zero failed/skipped test cases**; migrations has no standalone test files |
+| Same full command with `-race` before `-json` | Passed: **1,097 tests/subtests, zero failed/skipped test cases**; includes A/B allowed, C denied, cancellation, deduplication, ownership, stale versions and concurrency |
+| `npm test` from `frontend/` | Passed: 55 tests in four files |
+| `npm run build` from `frontend/` | Passed: TypeScript and Vite production build; no frontend source edits |
+| `docker build --network host -t finbot-p1-fixes-app:check .` | Passed on final backend source |
+| Isolated Compose `config --quiet`, then `up -d --no-build --wait --wait-timeout 90` | Passed: all three services healthy, HTTP bound to `127.0.0.1:18745`; fixed app image and previously built unchanged frontend image |
+| `python3 scripts/smoke.py --url http://127.0.0.1:18745` | Passed: CRUD, member names/ownership, partial updates/reassignment, filters, sorting, pagination and errors |
+| Final diff, added/modified functions, architecture/error/transaction review; `git diff --check` | Passed; source reviewed after gofmt |
+
+Exact focused command (same disposable `TEST_DATABASE_URL` as above):
+
+```sh
+go test -race ./internal/conversation ./internal/postgres ./internal/telegram -run 'Test(Cancellation|CommitOutcome|UncertainSaved|ProcessLogging|APIRequestDiagnostics|APIFailuresBoundedRetries|TerminalDelivery|ResponseRetryAfter|RateLimitMetadata|DeliveryPolling|TelegramTransactionStages|PollingPipeline)' -count=1 -timeout=180s
+```
+
+The Compose checks used `--env-file /dev/null -p finbot-p1-fixes-check -f
+compose.yaml -f /tmp/finbot-p1-compose.yaml`, synthetic environment values, empty
+bot/allowlist/key, and an unreachable test LLM endpoint. Regression PostgreSQL
+used a separate disposable container and random test schemas. Removed only this
+increment's disposable containers/network/volume afterward; original development
+containers remained healthy. No development database data was read or changed.
+Test/build logs and Compose override are under `/tmp/finbot-p1-*`.
+
+Files changed in this increment:
+
+- Production: `backend/internal/conversation/orchestrator.go`,
+  `backend/internal/postgres/telegram.go`, `backend/internal/telegram/bot.go`,
+  `backend/internal/telegram/client.go`.
+- New tests: `backend/internal/conversation/commit_recovery_test.go`,
+  `backend/internal/postgres/commit_recovery_test.go`,
+  `backend/internal/telegram/delivery_policy_test.go`,
+  `backend/internal/telegram/delivery_pipeline_test.go`.
+- Existing test expectations/assertions: `backend/internal/postgres/telegram_diagnostics_test.go`,
+  `backend/internal/telegram/bot_test.go`, `backend/internal/telegram/pipeline_test.go`.
+- Documentation: the two affected delivery-limit notes in `README.md`, the
+  transaction/delivery contract in `docs/architecture.md`, and this stage record.
+
+Limitations: uncertain outcomes intentionally lose that owner's transient draft,
+focus and listing context; durable results remain replayable. Terminal recipients
+may never receive the saved reply, while the committed expense remains intact.
+Unclassified/configuration or continuing transient failures can still pause the
+sequential queue. Real Telegram accounts, live LLMs, a physical lost-COMMIT-ack
+network fault, interactive browser behavior, and a remote GitHub Actions run were
+not checked in this increment. No paid calls, commits or subsequent fixes were made.

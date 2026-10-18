@@ -20,6 +20,10 @@ const invalidModelResponse = botresponse.InvalidModelResponse
 const invalidFilter = botresponse.InvalidFilter
 const staleSelection = botresponse.StaleSelection
 
+// ErrCommitUncertain means the transaction may have committed despite its error.
+// Callers must replay by update ID and discard transient state based on the old outcome.
+var ErrCommitUncertain = errors.New("conversation transaction commit outcome uncertain")
+
 // Repositories are supplied by the transaction boundary. Business validation
 // still goes through the existing expense services.
 type Repositories interface {
@@ -29,6 +33,9 @@ type Repositories interface {
 
 type Store interface {
 	Lookup(context.Context, int64, int64) (string, bool, error)
+	// Execute returns committed=true only for a newly confirmed commit. Errors
+	// with an unknown commit outcome must match ErrCommitUncertain; other errors
+	// guarantee that this attempt did not commit. Replays never execute the callback.
 	Execute(context.Context, int64, int64, func(context.Context, Repositories) (string, error)) (string, bool, error)
 }
 
@@ -190,6 +197,8 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 		return htmlReplyPrefix + reply, nil
 	})
 
+	orchestrator.invalidateUncertainState(ctx, owner, err)
+
 	if err == nil && committed {
 		orchestrator.states[owner] = next
 		logger := observability.Logger(ctx, "conversation", "commit_state").With("from_state", current.stateType(), "to_state", next.stateType(), "tool", operation.name)
@@ -216,7 +225,22 @@ func (orchestrator *Orchestrator) saveReply(ctx context.Context, updateID, owner
 		return htmlReplyPrefix + reply, nil
 	})
 
+	orchestrator.invalidateUncertainState(ctx, owner, err)
+
 	return storedReply(result), err
+}
+
+func (orchestrator *Orchestrator) invalidateUncertainState(ctx context.Context, owner int64, err error) {
+	if !errors.Is(err, ErrCommitUncertain) {
+		return
+	}
+
+	// The durable reply may describe a completed cancellation or mutation. Keeping
+	// the pre-transaction draft could arm it again after replay. Known rollbacks
+	// retain their state; ordinary old replays never invalidate newer state.
+	delete(orchestrator.states, owner)
+	observability.Logger(ctx, "conversation", "invalidate_state").WarnContext(ctx, "Conversation state invalidated",
+		"transaction_outcome", "uncertain", "reset_reason", "uncertain_commit")
 }
 
 func operationError(ctx context.Context, err error) (string, error) {

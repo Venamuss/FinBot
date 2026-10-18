@@ -101,11 +101,11 @@ func TestPollingPipelineIntegration(t *testing.T) {
 			},
 			expenses: 2, results: 5, modelCalls: 5, sends: 5,
 		},
-		{name: "committed send failure replays without mutation", updates: []string{pipelineMessageA}, sendFailure: true, expenses: 1, results: 1, modelCalls: 1, sends: 2},
+		{name: "committed terminal send failure advances without mutation", updates: []string{pipelineMessageA}, sendFailure: true, expenses: 1, results: 1, modelCalls: 1, sends: 1},
 		{name: "poll conflict retains offset and recovers", updates: []string{pipelineMessageA}, pollFailure: true, expenses: 1, results: 1, modelCalls: 1, sends: 1},
 		{name: "empty allowlist denies everyone", updates: []string{pipelineMessageA, pipelineMessageC}, emptyAllowed: true, sends: 2},
 		{name: "provider failure sends safe reply", updates: []string{pipelineMessageA}, modelFailure: true, results: 1, modelCalls: 1, sends: 1},
-		{name: "rate limit and delivery failure replay safe reply without model retry", updates: []string{pipelineMessageA}, rateLimit: true, sendFailure: true, results: 1, modelCalls: 1, sends: 2},
+		{name: "model rate limit and terminal delivery advance without model retry", updates: []string{pipelineMessageA}, rateLimit: true, sendFailure: true, results: 1, modelCalls: 1, sends: 1},
 		{name: "invalid tool sends clarification", updates: []string{pipelineMessageA}, invalidTool: true, results: 1, modelCalls: 1, sends: 1},
 	}
 	for _, test := range cases {
@@ -146,7 +146,7 @@ func TestPollingPipelineIntegration(t *testing.T) {
 			if err != nil || expenses != test.expenses || results != test.results {
 				t.Fatalf("expenses=%d results=%d error=%v", expenses, results, err)
 			}
-			if test.sendFailure || test.pollFailure {
+			if test.pollFailure {
 				if !slices.Equal(api.offsets, []int64{0, 0, 41}) {
 					t.Fatalf("failed update acknowledged too early: %v", api.offsets)
 				}
@@ -157,8 +157,8 @@ func TestPollingPipelineIntegration(t *testing.T) {
 			if test.invalidTool && api.replies[0] != "Не удалось понять запрос. Уточните сумму, дату или нужную трату." {
 				t.Fatal("invalid tool did not produce clarification")
 			}
-			if test.sendFailure && api.replies[0] != api.replies[1] {
-				t.Fatal("delivery retry did not replay stored reply")
+			if test.sendFailure && !slices.Equal(api.offsets, []int64{0, 41}) {
+				t.Fatal("terminal delivery failure held the polling offset")
 			}
 			if test.name == "allowed A B denied C and unsupported updates" {
 				if !slices.Equal(api.recipients, []int64{101, 202, 303, 101}) || !strings.Contains(api.replies[3], "<b>Всего: 350 ₽</b>") {

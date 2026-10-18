@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/Venamuss/FinBot/internal/conversation"
@@ -27,6 +28,25 @@ func (err *transactionError) Error() string {
 
 func (err *transactionError) Unwrap() error {
 	return err.cause
+}
+
+func (err *transactionError) Is(target error) bool {
+	if target != conversation.ErrCommitUncertain || err.stage != "commit" {
+		return false
+	}
+	if errors.Is(err.cause, pgx.ErrTxCommitRollback) || pgconn.SafeToRetry(err.cause) {
+		return false
+	}
+
+	// An ordinary server error rejects COMMIT (for example a deferred constraint).
+	// Connection failures and unknown-completion responses do not prove rollback.
+	var databaseError *pgconn.PgError
+	if errors.As(err.cause, &databaseError) {
+		return strings.HasPrefix(databaseError.Code, "08") || databaseError.Code == "40003" ||
+			databaseError.Severity == "FATAL" || databaseError.Severity == "PANIC"
+	}
+
+	return true
 }
 
 type TelegramStore struct {
@@ -68,7 +88,7 @@ func lookupResponse(ctx context.Context, db database, updateID, owner int64) (st
 //
 // committed is true only for a newly committed result. With a nil error, false
 // means replay or rejection of an update owned by someone else. With an error,
-// false does not rule out an uncertain commit; retry using the same update_id.
+// an unknown outcome matches conversation.ErrCommitUncertain. Retry by update_id.
 func (store *TelegramStore) Execute(ctx context.Context, updateID, owner int64, execute func(context.Context, conversation.Repositories) (string, error)) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
@@ -85,6 +105,11 @@ func (store *TelegramStore) Execute(ctx context.Context, updateID, owner int64, 
 		}
 		if !retryTransaction(err) || attempt == 2 || ctx.Err() != nil {
 			if err != nil {
+				outcome := "not_committed"
+				if errors.Is(err, conversation.ErrCommitUncertain) {
+					outcome = "uncertain"
+				}
+				attemptLogger = attemptLogger.With("transaction_outcome", outcome)
 				attemptLogger.DebugContext(ctx, "Telegram transaction failed", "error_category", observability.Category(err), "duration_ms", time.Since(started).Milliseconds())
 			}
 			return response, committed, err

@@ -266,7 +266,7 @@ compose.yaml             Локальное развёртывание из тр
 ## Известные ограничения
 
 - Ручная приёмка Telegram с разрешёнными пользователями A/B и запрещённым C ещё не выполнена. Тесты с имитациями API и проверка панели в реальном браузере прошли, но не подтверждают текущую интерпретацию провайдером или доставку реальным аккаунтам. См. [вывод о готовности к сдаче](docs/submission-readiness.md#g-final-verdict).
-- Опрос выполняется последовательно одним процессом; постоянная ошибка доставки ответа может заблокировать очередь. При неоднозначном результате отправки ответ может прийти повторно, но изменение расхода остаётся идемпотентным.
+- Опрос выполняется последовательно одним процессом. Доставка отказа в доступе выполняется по возможности; ошибки отправки 400/403 после сохранения результата не блокируют очередь. Сбои БД, временные и неклассифицированные ошибки Telegram сохраняют повторные попытки и могут приостановить очередь. При неоднозначном результате отправки ответ может прийти повторно, но изменение расхода остаётся идемпотентным.
 - Контекст выбора траты хранится в памяти. Списки бота содержат первые 20 записей и общее количество; если кандидатов на изменение больше 10, нужно сузить запрос. Поиск по описанию использует буквальную подстроку комментария.
 - Для сохранённых ответов Telegram нет очистки по сроку хранения или постоянной очереди доставки. Удаление расхода не удаляет ранее сохранённые ответы.
 - Одна семья на установку, личные текстовые сообщения, одно изменение расхода на запрос, без конвертации валют. Страницы со смещением могут сдвигаться при конкурентных изменениях; один ответ использует согласованный снимок данных.
@@ -540,7 +540,7 @@ compose.yaml             Three-service local deployment
 ## Known limitations
 
 - Live Telegram acceptance with allowed users A/B and denied C remains pending. Mock API tests and a real-browser panel run passed; they do not establish current provider interpretation or real-account delivery. See the [submission verdict](docs/submission-readiness.md#g-final-verdict).
-- One sequential polling process; a permanently failed response delivery can block the queue. An uncertain send can repeat a reply, while the expense mutation remains idempotent.
+- One sequential polling process. Denial delivery is best-effort; 400/403 send rejections after a saved result do not block later updates. Database, transient and unclassified Telegram failures remain retryable and can pause the queue. An uncertain send can repeat a reply, while the expense mutation remains idempotent.
 - Conversation focus is in memory. Bot lists return the first 20 records and a total; more than 10 modification candidates require a narrower query. Description search is a literal comment substring.
 - Saved Telegram replies have no retention cleanup or durable delivery outbox. Expense deletion does not erase historical saved replies.
 - One family per installation, private text messages, one expense mutation per request, no currency conversion. Offset pages can shift during concurrent changes; a single response uses a consistent snapshot.
