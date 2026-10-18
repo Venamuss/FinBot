@@ -118,6 +118,47 @@ async function fillCreate() {
 }
 
 describe("expense journal", () => {
+  it("completes create, edit and delete in the same mounted journal", async () => {
+    rows = [];
+    render(<App />);
+    await screen.findByText("Пока нет расходов");
+    await userEvent.click(
+      screen.getByRole("button", { name: "+ Добавить расход" }),
+    );
+    let dialog = within(screen.getByRole("dialog"));
+    await userEvent.type(
+      dialog.getByLabelText("Участник · Telegram ID *"),
+      "303",
+    );
+    await userEvent.type(dialog.getByLabelText("Сумма *"), "350.10");
+    await userEvent.selectOptions(dialog.getByLabelText("Категория *"), "еда");
+    await userEvent.click(
+      dialog.getByRole("button", { name: "Добавить расход" }),
+    );
+    expect(await screen.findByRole("cell", { name: "350,10" })).toBeTruthy();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Редактировать расход 43" }),
+    );
+    await screen.findByLabelText("Сумма *");
+    dialog = within(screen.getByRole("dialog"));
+    await userEvent.clear(dialog.getByLabelText("Сумма *"));
+    await userEvent.type(dialog.getByLabelText("Сумма *"), "450.20");
+    await userEvent.click(dialog.getByRole("button", { name: "Сохранить" }));
+    expect(await screen.findByRole("cell", { name: "450,20" })).toBeTruthy();
+
+    await userEvent.click(
+      screen.getByRole("button", { name: "Удалить расход 43" }),
+    );
+    dialog = within(screen.getByRole("dialog"));
+    await userEvent.click(dialog.getByRole("button", { name: "Удалить" }));
+    expect(await screen.findByText("Пока нет расходов")).toBeTruthy();
+    expect(rows).toEqual([]);
+    expect(request("POST")?.[0]).toBe("/api/expenses");
+    expect(request("PATCH")?.[0]).toBe("/api/expenses/43");
+    expect(request("DELETE")?.[0]).toBe("/api/expenses/43");
+  });
+
   it("renders exact amounts, IDs, calendar dates and HTML comments as text", async () => {
     rows[0].comment = "<script>window.hacked = true</script>";
     render(<App />);

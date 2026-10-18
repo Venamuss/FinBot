@@ -1,6 +1,6 @@
 # FinBot Implementation Stages
 
-Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The current increment implements complete administrative expense CRUD and member lookup through a Go REST API with PostgreSQL, the owner-scoped expense operations and calendar periods of Slice 03A, the configurable LLM adapter of Slice 03B, and the Telegram/conversation/idempotency implementation of Slice 03C; Slice 04 now adds the React admin panel and its same-origin nginx deployment; full MVP acceptance remains pending the outstanding manual Telegram scenarios.
+Basis: [assignment requirements and project decisions](requirements.md), [architecture](architecture.md), and [REST contract](api.md). The application implements administrative REST CRUD, the React panel, member display names, owner-scoped Telegram conversations, a configurable LLM adapter, PostgreSQL persistence/idempotency, and CI configuration. Slice 05 completed local automated, browser and Docker QA and submission documentation; final real-Telegram A/B/C acceptance remains pending. The current requirement-by-requirement verdict is in [submission-readiness.md](submission-readiness.md). Earlier sections below are historical stage records, not current claims of missing components.
 
 R01–R14 identify requirements from the original assignment, P01–P12 identify project decisions, and T01–T13 identify implementation and verification tasks. Contracts are documented; the actual status of the current increment is recorded below. Mark task completion together with the result and checks performed.
 
@@ -406,6 +406,65 @@ Initial sandbox attempts failed because mock listeners/default Go cache writes a
 - Existing documented limits remain: one sequential polling process, a permanently failed Telegram delivery can block the queue, conversation focus is in memory, and processed responses have no retention cleanup/outbox. No speculative retry framework, schema redesign or new product functionality was introduced.
 - **Optional T13:** live local LLM verification remains unperformed and does not block MVP acceptance. It is separate from the mandatory checks above.
 
+## Slice 05 — Final QA, README & Submission Readiness — 18.10.2026
+
+Completed the final audit and local QA scope; no additional development phase started. Compared the original R01–R14 requirements with the implementation, REST contract, architecture, configuration, tests, CI and Compose. No missing assignment feature or confirmed critical production defect was reproduced. The detailed A–G report, evidence boundaries and manual scenario are in [submission-readiness.md](submission-readiness.md).
+
+### Changes
+
+- Replaced the root README with a professional English entry point: purpose, factual configuration/version badges, features/stack, real Mermaid architecture, verified quick start, full environment tables, Russian usage examples, REST overview, development/testing instructions, network/security boundary, project map, design decisions and known limits. No passing-CI or license claim is implied. Added screenshot capture guidance without invented images.
+- Documented optional proxy settings in `.env.example` without changing values or requiring a gateway/VPN. Clarified the existing template model override versus Go/Compose fallbacks in architecture/README; no provider/model selection changed. Ignored the documented `frontend/.env.local` file.
+- Added `internal/telegram/assignment_test.go`: real PostgreSQL, scripted LLM HTTP and Telegram HTTP clients, all eight requested Russian examples, message-time Moscow calendar/yesterday, exact monthly total, full expense snapshot before/after read tools, A/B isolation and denied C. A REST edit is read and then deleted through the bot without changing B's row. This validates adapters and execution, not live model interpretation.
+- Added a focused full create-edit-delete workflow in one mounted React journal using existing Vitest/Testing Library/fetch mocks. No testing framework, dependency, production application code or migration was added.
+
+### Verification actually executed
+
+| Check | Result |
+|---|---|
+| Go formatting and review | `gofmt -w backend/internal/telegram/assignment_test.go`; formatting check, `go vet ./...`, complete diff/new-function review and `git diff --check` passed |
+| Backend | `go test ./... -count=1 -timeout=180s`, focused workflow test, and full `go test -race ./... -count=1 -timeout=180s` passed with disposable PostgreSQL; integration tests ran rather than skipping. Final race run verified the README's standalone database setup on loopback 15432. Used `GOCACHE=/tmp/finbot-05-go-cache` |
+| Frontend | Offline cached `npm ci` passed with host execution access; `npm test` passed 55 tests in four files, `npm run typecheck` and `npm run build` passed. Calendar/validation tests passed 27 cases each under America/Los_Angeles and Pacific/Kiritimati |
+| Browser | Real production frontend/REST in Chromium passed create/edit/delete, invalid amount, member rename, combined filters, sorting, 21-row pagination and last-page deletion recovery, injected network-error/retry, empty state and mobile dialogs. Desktop 1440×1000/mobile 390×844; mobile document width stayed 390px with contained table scroll. No page errors in the normal workflow; intentional network abort produced its expected console error |
+| CI configuration | Existing actionlint binary at `/tmp/finbot-046-tools/actionlint` validated `.github/workflows/ci.yml`. Workflow contents and local equivalents checked. No actual GitHub run was verified |
+| Docker | Isolated project `finbot-05`, synthetic env, own image tags, HTTP loopback 18505 and disposable volume: Compose config, ordinary Compose image builds, healthy startup, complete `scripts/smoke.py`, persistence after restart and after down/up recreation passed. After cleanup, the exact single-command `up -d --build --wait` path with a fresh QA volume and a new smoke run also passed. Blank bot token/key and unreachable LLM proved the panel works independently; no proxy configured |
+| Shutdown and network boundary | QA app SIGTERM exit code 0 and healthy restart verified. Base Compose publishes only frontend on 127.0.0.1; Go/database ports are internal. Test-only database publication used loopback 18506 |
+| Docs / Git / privacy | Relative links/internal anchors, README commands, environment parity and Mermaid reviewed; formatting/diff checks passed. No tracked credential-pattern or exact local credential matches; ignored env/build/browser artifacts confirmed. No staged changes/commits; original assignment and development database unchanged |
+
+Initial sandbox Docker socket access and npm esbuild spawn were restricted; authorized host-access reruns passed. Temporary credentials, overrides, caches and logs stayed in `/tmp`. The standalone README test container and isolated QA stack/volume were removed after verification; existing development volumes, `.env` and image tags were preserved.
+
+### Mandatory versus optional status
+
+- T02–T11 implementation and applicable automated checks are verified; current final browser checks also pass. T01's historical configured-provider tool-calling run remains recorded above; it was not repeated here. T12 documentation, startup, restart/persistence, mocked A/B/C and panel acceptance passed.
+- **Mandatory T12 remainder:** real Telegram/selected-provider startup and acceptance with allowed A/B and denied C. Not executed; no live Telegram sends or paid LLM calls were made. Therefore full MVP/submission acceptance is still conditional on the manual scenario in the report. No original implementation requirement is known to be missing/broken.
+- **GitHub run:** still unverified; local workflow validation/equivalent checks passed. No passing-CI badge or claim was added.
+- **Optional T13:** live local LLM check unperformed, not a blocker. Screenshots, other browser engines, assistive technology, real proxy outages and load tests remain unperformed optional checks. Existing sequential polling, in-memory focus, limited bot lists/candidates and saved-reply retention limits are documented.
+
+## README Russian Translation — 18.10.2026
+
+Added a complete Russian translation before the unchanged English README, as requested. Added stable language-navigation anchors; translated prose, tables, diagram labels and directory descriptions while retaining commands, API paths, environment names and configuration values.
+
+Verification: compared the English section with its pre-edit copy (identical), checked that all six shell blocks match across languages, compared section/subsection counts and environment variable names, checked relative Markdown links and anchors including existing links to English headings, and reviewed the translation/diff. `git diff --check` passed. This documentation-only follow-up changes only README and this task record; application code/dependencies are unchanged. Go/frontend/Compose checks were not rerun for the translation; prior Slice 05 results and pending live acceptance remain unchanged.
+
+## Fix — Listing Without Date Filters — 18.10.2026
+
+Confirmed the cause before implementation: the conversation system prompt and list tool description explicitly instructed “no date means today”, and `Orchestrator.filter` independently injected `PeriodToday` for missing dates. The existing optional-date service validation and parameterized PostgreSQL predicates already handled unbounded dates correctly; no SQL/schema change was needed.
+
+- Lists now leave omitted/null dates unset; creation and totals keep their existing today defaults. Independent lists do not inherit dates or offsets. The model receives explicit rules for new requests versus follow-ups and per-owner resolved listing context for “ещё”/filter refinements. An unrelated pending clarification no longer replaces an independent list's calendar reference.
+- Added nullable string list arguments `limit`/`offset`, validated server-side (1–20/default 20 and 0–2147483647/default 0). Kept owner predicates, `spent_at DESC, id DESC`, count/item transaction semantics and existing offset pagination. “Последние 5 трат” uses limit 5 without dates. Russian replies show actual dates/category/comment filters, displayed/total counts, positions and continuation guidance. Rendering enforces 4096 UTF-16 units; continuation advances only by displayed rows.
+- Regression coverage includes historical unfiltered rows, omitted and null model arguments, today/last seven days/current week/month, latest five, empty results with/without filters, multiple pages and ties, A/B ownership/context separation, repeated independent lists after a filtered query, pending clarification across midnight, invalid pagination and worst-case Unicode replies. Updated scripted Telegram fixtures to match all-date listing semantics.
+- Changed production files: `internal/conversation/{orchestrator,tools,execute}.go`; tests: `internal/conversation/{listing,orchestrator}_test.go`, `internal/postgres/owned_test.go`, `internal/telegram/{pipeline,assignment}_test.go`; updated the related date/context rules in requirements and architecture. REST, dependencies, provider/model settings and CRUD are unchanged. Existing working-tree changes were preserved; no commit was made.
+
+Verification actually executed:
+
+| Check | Result |
+|---|---|
+| Go | `go test ./... -count=1 -timeout=180s` passed; full `go test -race ./... -count=1 -timeout=180s` passed with `TEST_DATABASE_URL` against disposable PostgreSQL 17, including real integration tests and mandatory allowed A/B / denied C. A focused follow-up run passed the strengthened Unicode/null-argument cases |
+| Formatting/static review | `gofmt`, `go vet ./...`, formatting check, `git diff --check`, full task diff and changed-function review passed; ownership, optional SQL predicates and transaction boundaries reviewed |
+| Frontend | `npm test`: 55 tests in four files passed. `npm run build` passed, including TypeScript checking |
+| Compose | Separate `finbot-listing-fix-check` images/volume, loopback HTTP 18615 and test PostgreSQL 18616: `up -d --build --wait` passed with all three services healthy; `scripts/smoke.py` passed CRUD, names/ownership, filters, sorting, pagination and error scenarios. Bot token/key empty and LLM unreachable; development stack preserved |
+
+Initial sandbox Go attempts could not open mock HTTP listeners; reruns with host access passed. Automated LLM/Telegram calls used local test servers only; no paid OpenRouter requests or live Telegram sends occurred. The disposable Compose stack/volume was removed after verification; the existing development services remained running. Live model interpretation/manual Telegram acceptance was not repeated; existing mandatory MVP live acceptance and optional T13 remain separate. Listing context expires after 30 minutes/restart, and existing offset pagination may shift when expenses change between pages.
+
 ## Mandatory MVP
 
 Maintenance check, 16.10.2026: centralized all expense model/service errors in a single `var` block in `model.go`, including `ErrNotFound` and validation messages. Existing messages and REST behavior are preserved. `gofmt`, `go test ./...`, and `go vet ./...` passed; PostgreSQL integration tests were skipped without `TEST_DATABASE_URL`. Compose smoke was not rerun for this declaration-only refactoring.
@@ -478,7 +537,9 @@ For the local run, verify an empty key, a correct address from inside the contai
 
 Automated scenarios use LLM and Telegram test doubles; SQL and transactions are verified against PostgreSQL. The mandatory manual run uses one configured LLM endpoint, two allowed Telegram users, and one denied user. A separate live local run is recorded only under T13.
 
-## MVP Readiness
+## MVP Readiness Criteria
+
+These are acceptance criteria, not a statement that every check is complete. The current verdict and remaining live acceptance are in [submission-readiness.md](submission-readiness.md).
 
 - R01–R14 and mandatory project rules have been verified; results for T01–T12 are recorded in this document.
 - Assignment examples, the allowlist, expense ownership isolation, and last-expense scenarios pass.

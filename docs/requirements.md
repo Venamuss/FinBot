@@ -57,7 +57,7 @@ Administrators may assign optional human-readable names to immutable Telegram ID
 
 ## Dates and Conversation
 
-- If no date is specified, use today's date in the configured time zone relative to the original message.
+- For creation and totals, an omitted date means today in the configured time zone relative to the original message. For expense lists, omitted dates mean all dates; independent listing requests do not inherit earlier filters. Only explicit follow-ups reuse the previous listing. Lists retain `spent_at DESC, id DESC`, at most 20 rows per message (or a smaller requested limit), offset pagination, and Telegram's message-length limit; the response identifies the applied filters and count.
 - «За неделю» means today and the six preceding days; «на этой неделе» means Monday through today; «в этом месяце» means the first day of the month through today.
 - Focus is set after creating, editing, or unambiguously selecting one of the user's own expenses. A result containing multiple records does not select one automatically; deleting the selected expense clears the focus.
 - When there is no focus, including after context expiration or a restart, «последняя трата» is the user's own record ordered by `created_at DESC, id DESC`, regardless of `spent_at`.
