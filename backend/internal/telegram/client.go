@@ -95,9 +95,10 @@ func (client *Client) Updates(ctx context.Context, offset int64) ([]Update, erro
 
 func (client *Client) Send(ctx context.Context, chatID int64, text string) error {
 	request := struct {
-		ChatID int64  `json:"chat_id"`
-		Text   string `json:"text"`
-	}{chatID, text}
+		ChatID    int64  `json:"chat_id"`
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
+	}{chatID, text, "HTML"}
 	return client.call(ctx, "sendMessage", request, nil)
 }
 

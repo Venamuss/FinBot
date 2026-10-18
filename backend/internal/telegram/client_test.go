@@ -24,11 +24,15 @@ func TestTransportPrivateAccess(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		sends++
 		var input struct {
-			ChatID int64  `json:"chat_id"`
-			Text   string `json:"text"`
+			ChatID    int64  `json:"chat_id"`
+			Text      string `json:"text"`
+			ParseMode string `json:"parse_mode"`
 		}
 		if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
 			t.Error(err)
+		}
+		if input.ParseMode != "HTML" {
+			t.Error("missing HTML parse mode")
 		}
 		if r.URL.Path != "/bot-token/sendMessage" || (input.ChatID == 303 && input.Text != Denied) {
 			t.Error("wrong recipient or denial")

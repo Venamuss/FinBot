@@ -302,11 +302,11 @@ func TestConversationOwnershipAndStalePanelIntegration(t *testing.T) {
 				}
 			}
 			total := run(8, 101, "total_expenses", `{"period":"this_month"}`)
-			expected := "350.00"
+			expected := "350 ₽"
 			if change == "amount" {
-				expected = "800.00"
+				expected = "800 ₽"
 			}
-			if total != "Всего: "+expected {
+			if !strings.Contains(total, "<b>Всего: "+expected+"</b>") {
 				t.Fatal(total)
 			}
 			response = run(9, 101, "list_expenses", `{}`)

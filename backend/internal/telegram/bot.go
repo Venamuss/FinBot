@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Venamuss/FinBot/internal/botresponse"
 	"github.com/Venamuss/FinBot/internal/observability"
 )
 
@@ -68,6 +69,9 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 		if ctx.Err() == nil {
 			// Handler and transport errors may contain secrets or expense data.
 			logger.ErrorContext(ctx, "Telegram update processing failed", "error_category", errorCategory(err), "duration_ms", time.Since(started).Milliseconds())
+			if sendErr := bot.api.Send(ctx, message.Chat.ID, botresponse.ProcessingFailure); sendErr != nil && ctx.Err() == nil {
+				logger.ErrorContext(ctx, "Telegram failure notification delivery failed", "error_category", errorCategory(sendErr))
+			}
 		}
 		return err
 	}

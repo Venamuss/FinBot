@@ -78,13 +78,17 @@ func TestAssignmentWorkflowIntegration(t *testing.T) {
 	replies := make(chan string, 1)
 	telegramAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
-			Text string `json:"text"`
+			Text      string `json:"text"`
+			ParseMode string `json:"parse_mode"`
 		}
 		if r.URL.Path != "/bot-token/sendMessage" {
 			t.Error("unexpected Telegram request")
 		}
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Error(err)
+		}
+		if request.ParseMode != "HTML" {
+			t.Error("missing HTML parse mode")
 		}
 		replies <- request.Text
 		_, _ = w.Write([]byte(`{"ok":true,"result":{}}`))
@@ -110,11 +114,11 @@ func TestAssignmentWorkflowIntegration(t *testing.T) {
 	}
 	for _, text := range []string{"еда 500", "кофе 350", "последнее было не 350, а 450", "такси 1200 вчера"} {
 		reply := send(101, text)
-		if !strings.HasPrefix(reply, "Добавлено:") && !strings.HasPrefix(reply, "Изменено:") {
+		if !strings.HasPrefix(reply, "✅ <b>Расход добавлен · #") && !strings.HasPrefix(reply, "✏️ <b>Расход обновлён · #") {
 			t.Fatalf("workflow mutation failed: %s", reply)
 		}
 	}
-	if !strings.Contains(send(202, "кофе 700"), "700.00") {
+	if !strings.Contains(send(202, "кофе 700"), "700 ₽") {
 		t.Fatal("second owner's expense was not created")
 	}
 	repo := postgres.New(pool)
@@ -127,12 +131,12 @@ func TestAssignmentWorkflowIntegration(t *testing.T) {
 		t.Fatal("workflow did not create exactly four expenses")
 	}
 	for _, check := range []struct{ text, expected string }{
-		{"мои расходы", "показано 3 из 3"},
-		{"покажи траты за неделю", "показано 3 из 3"},
-		{"сколько я потратил на еду в этом месяце", "Всего: 950.00"},
+		{"мои расходы", "3 записи · "},
+		{"покажи траты за неделю", "3 записи · "},
+		{"сколько я потратил на еду в этом месяце", "<b>Всего: 950 ₽</b>"},
 	} {
 		reply := send(101, check.text)
-		if !strings.Contains(reply, check.expected) || strings.Contains(reply, "700.00") {
+		if !strings.Contains(reply, check.expected) || strings.Contains(reply, "700 ₽") {
 			t.Fatalf("incorrect owner-scoped read: %s", reply)
 		}
 	}
@@ -154,10 +158,10 @@ func TestAssignmentWorkflowIntegration(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("web edit failed: HTTP %d", response.Code)
 	}
-	if !strings.Contains(send(101, "покажи кофе за сегодня"), "475.00") {
+	if !strings.Contains(send(101, "покажи кофе за сегодня"), "475 ₽") {
 		t.Fatal("Telegram did not read the web edit")
 	}
-	if !strings.Contains(send(101, "удали последнюю трату"), "475.00") {
+	if !strings.Contains(send(101, "удали последнюю трату"), "475 ₽") {
 		t.Fatal("Telegram did not delete the focused expense")
 	}
 	afterDelete, err := repo.List(ctx, filter)

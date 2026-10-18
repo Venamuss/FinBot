@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -37,12 +38,12 @@ func TestListingPeriodsAndLatestFive(t *testing.T) {
 		ids     []int64
 		total   int
 	}{
-		{"мои траты", `{}`, "Все ваши расходы", []int64{1, 2, 3, 4, 5, 6, 7, 8}, 8},
-		{"траты сегодня", `{"period":"today"}`, "Расходы за сегодня", []int64{1}, 1},
-		{"траты за неделю", `{"period":"last_seven_days"}`, "Расходы за последние 7 дней", []int64{1, 2, 3}, 3},
-		{"траты на этой неделе", `{"period":"this_week"}`, "Расходы за текущую неделю", []int64{1, 2}, 2},
-		{"траты за месяц", `{"period":"this_month"}`, "Расходы за текущий месяц", []int64{1, 2, 3, 4, 5, 6}, 6},
-		{"последние 5 трат", `{"limit":"5"}`, "Все ваши расходы", []int64{1, 2, 3, 4, 5}, 8},
+		{"мои траты", `{}`, "За всё время", []int64{1, 2, 3, 4, 5, 6, 7, 8}, 8},
+		{"траты сегодня", `{"period":"today"}`, "За сегодня", []int64{1}, 1},
+		{"траты за неделю", `{"period":"last_seven_days"}`, "За последние 7 дней", []int64{1, 2, 3}, 3},
+		{"траты на этой неделе", `{"period":"this_week"}`, "За текущую неделю", []int64{1, 2}, 2},
+		{"траты за месяц", `{"period":"this_month"}`, "За текущий месяц", []int64{1, 2, 3, 4, 5, 6}, 6},
+		{"последние 5 трат", `{"limit":"5"}`, "За всё время", []int64{1, 2, 3, 4, 5}, 8},
 	}
 	for _, test := range cases {
 		t.Run(test.text, func(t *testing.T) {
@@ -52,7 +53,8 @@ func TestListingPeriodsAndLatestFive(t *testing.T) {
 			seedListingExpenses(t, store, 101, "2026-10-17", "2026-10-13", "2026-10-11", "2026-10-10", "2026-10-02", "2026-10-01", "2026-09-30", "2024-02-29")
 			seedListingExpenses(t, store, 202, "2026-10-17")
 			reply := handle(t, orchestrator, model, 1, 101, test.text, "list_expenses", test.args)
-			if !strings.HasPrefix(reply, test.heading) || !strings.Contains(reply, fmt.Sprintf("показано %d из %d", len(test.ids), test.total)) {
+			header := strings.SplitN(plainReply(reply), "\n", 3)
+			if len(header) < 2 || !strings.Contains(header[1], test.heading) || !strings.HasPrefix(header[1], fmt.Sprintf("%d ", test.total)) || len(listingIDs(t, reply)) != len(test.ids) {
 				t.Fatal(reply)
 			}
 			if got := listingIDs(t, reply); !slices.Equal(got, test.ids) {
@@ -66,11 +68,11 @@ func listingIDs(t *testing.T, reply string) []int64 {
 	t.Helper()
 	var ids []int64
 	for _, line := range strings.Split(reply, "\n") {
-		if !strings.HasPrefix(line, "#") {
+		if !strings.Contains(line, " — <b>") || !strings.Contains(line, " · #") {
 			continue
 		}
 		var id int64
-		if _, err := fmt.Sscanf(line, "#%d", &id); err != nil {
+		if _, err := fmt.Sscanf(line[strings.LastIndex(line, " · #")+len(" · #"):], "%d", &id); err != nil {
 			t.Fatal(err)
 		}
 		ids = append(ids, id)
@@ -83,12 +85,12 @@ func TestListingEmptyWithAndWithoutDates(t *testing.T) {
 		orchestrator, model, store := setup(t)
 		seedListingExpenses(t, store, 202, "2026-10-17")
 		reply := handle(t, orchestrator, model, 1, 101, "траты", "list_expenses", args)
-		if !strings.Contains(reply, "показано 0 из 0\nТраты не найдены.") || len(listingIDs(t, reply)) != 0 {
+		if !strings.Contains(plainReply(reply), "0 записей · ") || len(listingIDs(t, reply)) != 0 {
 			t.Fatal(reply)
 		}
 		seedListingExpenses(t, store, 101, "2024-02-29")
 		reply = handle(t, orchestrator, model, 2, 101, "траты сегодня", "list_expenses", `{"period":"today"}`)
-		if !strings.HasPrefix(reply, "Расходы за сегодня") || !strings.Contains(reply, "показано 0 из 0\nТраты не найдены.") {
+		if !strings.Contains(reply, "За сегодня") || !strings.Contains(plainReply(reply), "0 записей · ") {
 			t.Fatal(reply)
 		}
 	}
@@ -102,11 +104,11 @@ func TestListingPaginationAndIndependentRequests(t *testing.T) {
 	seedListingExpenses(t, store, 101, "2024-02-29")
 	seedListingExpenses(t, store, 202, "2026-10-17")
 	first := handle(t, orchestrator, model, 1, 101, "траты за неделю", "list_expenses", `{"period":"last_seven_days"}`)
-	if !strings.Contains(first, "показано 20 из 25") || len(listingIDs(t, first)) != 20 || !strings.Contains(first, "ещё") {
+	if !strings.Contains(first, "Записи 1–20 из 25.") || len(listingIDs(t, first)) != 20 || !strings.Contains(first, "ещё") {
 		t.Fatal(first)
 	}
 	second := handle(t, orchestrator, model, 2, 101, "ещё", "list_expenses", `{"date_from":"2026-10-11","date_to":"2026-10-17","offset":"20"}`)
-	if !strings.Contains(second, "показано 5 из 25") || !slices.Equal(listingIDs(t, second), []int64{5, 4, 3, 2, 1}) || strings.Contains(second, "ещё") {
+	if !strings.Contains(second, "Записи 21–25 из 25.") || !slices.Equal(listingIDs(t, second), []int64{5, 4, 3, 2, 1}) || strings.Contains(second, "ещё") {
 		t.Fatal(second)
 	}
 	var data map[string]json.RawMessage
@@ -122,12 +124,12 @@ func TestListingPaginationAndIndependentRequests(t *testing.T) {
 	}
 	for index, text := range []string{"мои траты", "мои расходы", "траты", "покажи расходы"} {
 		reply := handle(t, orchestrator, model, int64(index+3), 101, text, "list_expenses", `{}`)
-		if !strings.HasPrefix(reply, "Все ваши расходы: показано 20 из 26") || orchestrator.states[101].listing.DateFrom != "" || orchestrator.states[101].listing.NextOffset != 20 {
+		if !strings.Contains(reply, "Записи 1–20 из 26.") || orchestrator.states[101].listing.DateFrom != "" || orchestrator.states[101].listing.NextOffset != 20 {
 			t.Fatal("independent request inherited a previous date or offset:", reply)
 		}
 	}
 	last := handle(t, orchestrator, model, 7, 101, "ещё", "list_expenses", `{"offset":"20"}`)
-	if !strings.Contains(last, "показано 6 из 26") || !slices.Equal(listingIDs(t, last), []int64{5, 4, 3, 2, 1, 26}) {
+	if !strings.Contains(last, "Записи 21–26 из 26.") || !slices.Equal(listingIDs(t, last), []int64{5, 4, 3, 2, 1, 26}) {
 		t.Fatal(last)
 	}
 	for _, id := range listingIDs(t, first) {
@@ -165,18 +167,18 @@ func TestListingOptionalDateAndFilters(t *testing.T) {
 		args string
 		want string
 	}{
-		{name: "my spending", text: "мои траты", tool: "list_expenses", args: `{}`, want: "Все ваши расходы: показано 3 из 3"},
-		{name: "my expenses", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null}`, want: "Все ваши расходы: показано 3 из 3"},
-		{name: "all optional arguments null", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null,"limit":null,"offset":null}`, want: "Все ваши расходы: показано 3 из 3"},
-		{name: "spending", text: "траты", tool: "list_expenses", args: `{}`, want: "Все ваши расходы: показано 3 из 3"},
-		{name: "show expenses", text: "покажи расходы", tool: "list_expenses", args: `{}`, want: "Все ваши расходы: показано 3 из 3"},
-		{name: "all today", text: "покажи все расходы за сегодня", tool: "list_expenses", args: `{"period":"today","date_from":null,"date_to":null,"category":null,"query":null}`, want: "Расходы за сегодня с 2026-10-17 по 2026-10-17: показано 2 из 2"},
-		{name: "explicit date", tool: "list_expenses", args: `{"period":null,"date_from":"2026-10-16","date_to":"2026-10-16","category":null,"query":null}`, want: "Ваши расходы с 2026-10-16 по 2026-10-16: показано 1 из 1"},
-		{name: "relative yesterday", tool: "list_expenses", args: `{"period":"yesterday"}`, want: "Расходы за вчера с 2026-10-16 по 2026-10-16: показано 1 из 1"},
-		{name: "category", tool: "list_expenses", args: `{"category":"транспорт"}`, want: "Все ваши расходы; категория: транспорт: показано 1 из 1"},
-		{name: "literal comment", tool: "list_expenses", args: `{"query":"кофе"}`, want: "Все ваши расходы; описание содержит: «кофе»: показано 1 из 1"},
-		{name: "empty result", tool: "list_expenses", args: `{"category":"жильё"}`, want: "Все ваши расходы; категория: жильё: показано 0 из 0\nТраты не найдены."},
-		{name: "total today", tool: "total_expenses", args: `{}`, want: "Всего: 550.00"},
+		{name: "my spending", text: "мои траты", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
+		{name: "my expenses", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
+		{name: "all optional arguments null", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null,"limit":null,"offset":null}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
+		{name: "spending", text: "траты", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
+		{name: "show expenses", text: "покажи расходы", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
+		{name: "all today", text: "покажи все расходы за сегодня", tool: "list_expenses", args: `{"period":"today","date_from":null,"date_to":null,"category":null,"query":null}`, want: "🧾 Мои расходы\n2 записи · За сегодня · 17 октября 2026"},
+		{name: "explicit date", tool: "list_expenses", args: `{"period":null,"date_from":"2026-10-16","date_to":"2026-10-16","category":null,"query":null}`, want: "🧾 Мои расходы\n1 запись · 16 октября 2026"},
+		{name: "relative yesterday", tool: "list_expenses", args: `{"period":"yesterday"}`, want: "🧾 Мои расходы\n1 запись · За вчера · 16 октября 2026"},
+		{name: "category", tool: "list_expenses", args: `{"category":"транспорт"}`, want: "🧾 Мои расходы\n1 запись · За всё время · 🚕 Транспорт"},
+		{name: "literal comment", tool: "list_expenses", args: `{"query":"кофе"}`, want: "🧾 Мои расходы\n1 запись · За всё время · «кофе»"},
+		{name: "empty result", tool: "list_expenses", args: `{"category":"жильё"}`, want: "🧾 Мои расходы\n0 записей · За всё время · 🏠 Жильё\nРасходы не найдены."},
+		{name: "total today", tool: "total_expenses", args: `{}`, want: "📊 Всего: 550 ₽\n17 октября 2026"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -186,7 +188,7 @@ func TestListingOptionalDateAndFilters(t *testing.T) {
 			handle(t, orchestrator, model, 3, 101, "synthetic", "create_expense", `{"amount":"100","category":"еда","spent_at":"yesterday"}`)
 			handle(t, orchestrator, model, 4, 202, "synthetic", "create_expense", `{"amount":"900","category":"покупки","spent_at":"today","comment":"private-owner-B"}`)
 			reply := handle(t, orchestrator, model, 5, 101, test.text, test.tool, test.args)
-			if !strings.HasPrefix(reply, test.want) || strings.Contains(reply, "private-owner-B") || len(store.repo.items) != 4 {
+			if !strings.HasPrefix(plainReply(reply), test.want) || strings.Contains(reply, "private-owner-B") || len(store.repo.items) != 4 {
 				t.Fatalf("unexpected listing: %s", reply)
 			}
 			if string(model.request.ToolChoice) != `"required"` || model.request.ParallelToolCalls == nil || *model.request.ParallelToolCalls || !model.request.RequireExactlyOneToolCall {
@@ -222,7 +224,7 @@ func TestListingArgumentErrors(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			orchestrator, model, store := setup(t)
 			reply := handle(t, orchestrator, model, 1, 101, "synthetic", "list_expenses", test.args)
-			if reply != test.want || len(store.repo.items) != 0 || store.results[1] != reply {
+			if reply != test.want || len(store.repo.items) != 0 || storedReply(store.results[1]) != reply {
 				t.Fatalf("reply=%s", reply)
 			}
 		})
@@ -237,7 +239,7 @@ func TestListingThroughAdapterAndSafeFailures(t *testing.T) {
 		finish string
 		want   string
 	}{
-		{name: "valid list", calls: call, finish: "tool_calls", want: "Все ваши расходы: показано 0 из 0\nТраты не найдены."},
+		{name: "valid list", calls: call, finish: "tool_calls", want: "🧾 Мои расходы\n0 записей · За всё время\nРасходы не найдены. Попробуйте другой период или добавьте расход."},
 		{name: "zero calls", finish: "stop", want: invalidModelResponse},
 		{name: "multiple calls", calls: call + "," + strings.Replace(call, `"id":"1"`, `"id":"2"`, 1), finish: "tool_calls", want: invalidModelResponse},
 		{name: "malformed arguments", calls: strings.Replace(call, `"arguments":"{}"`, `"arguments":"{private-argument"`, 1), finish: "tool_calls", want: invalidModelResponse},
@@ -277,7 +279,7 @@ func TestListingThroughAdapterAndSafeFailures(t *testing.T) {
 			orchestrator.model = client
 			for attempt := 0; attempt < 2; attempt++ {
 				reply, err := orchestrator.Handle(context.Background(), 1, 101, "private-message", time.Now())
-				if err != nil || reply != test.want {
+				if err != nil || plainReply(reply) != test.want {
 					t.Fatalf("unexpected safe reply: %s, error=%v", reply, err)
 				}
 			}
@@ -337,4 +339,8 @@ func TestReadToolSchemas(t *testing.T) {
 			}
 		}
 	}
+}
+
+func plainReply(reply string) string {
+	return html.UnescapeString(strings.NewReplacer("<b>", "", "</b>", "", "<code>", "", "</code>", "").Replace(reply))
 }

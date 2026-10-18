@@ -151,17 +151,17 @@ func TestPollingPipelineIntegration(t *testing.T) {
 					t.Fatalf("failed update acknowledged too early: %v", api.offsets)
 				}
 			}
-			if (test.modelFailure || test.rateLimit) && api.replies[0] != "Не удалось обратиться к модели. Повторите запрос новым сообщением." {
+			if (test.modelFailure || test.rateLimit) && api.replies[0] != "Сейчас не удаётся обработать запрос. Попробуйте позже новым сообщением." {
 				t.Fatal("provider failure reply is not safe")
 			}
-			if test.invalidTool && api.replies[0] != "Не удалось определить действие. Уточните сумму, дату или нужную трату." {
+			if test.invalidTool && api.replies[0] != "Не удалось понять запрос. Уточните сумму, дату или нужную трату." {
 				t.Fatal("invalid tool did not produce clarification")
 			}
 			if test.sendFailure && api.replies[0] != api.replies[1] {
 				t.Fatal("delivery retry did not replay stored reply")
 			}
 			if test.name == "allowed A B denied C and unsupported updates" {
-				if !slices.Equal(api.recipients, []int64{101, 202, 303, 101}) || api.replies[3] != "Всего: 350.00" {
+				if !slices.Equal(api.recipients, []int64{101, 202, 303, 101}) || !strings.Contains(api.replies[3], "<b>Всего: 350 ₽</b>") {
 					t.Fatal("incorrect recipients or owner total")
 				}
 				memberCtx, cancelMembers := context.WithTimeout(context.Background(), 5*time.Second)
@@ -179,9 +179,9 @@ func TestPollingPipelineIntegration(t *testing.T) {
 					t.Fatal("incorrect listing recipients")
 				}
 				for index, reply := range api.replies[2:] {
-					heading := "Все ваши расходы: показано 1 из 1"
+					heading := "🧾 <b>Мои расходы</b>\n1 запись · За всё время"
 					if index == 2 {
-						heading = "Расходы за сегодня с 2026-10-17 по 2026-10-17: показано 1 из 1"
+						heading = "🧾 <b>Мои расходы</b>\n1 запись · За сегодня · 17 октября 2026"
 					}
 					if !strings.HasPrefix(reply, heading) {
 						t.Fatal("listing failed or included another owner's rows")
@@ -365,11 +365,15 @@ func (api *pipelineTelegram) poll(w http.ResponseWriter, r *http.Request) {
 
 func (api *pipelineTelegram) send(w http.ResponseWriter, r *http.Request) {
 	var request struct {
-		ChatID int64  `json:"chat_id"`
-		Text   string `json:"text"`
+		ChatID    int64  `json:"chat_id"`
+		Text      string `json:"text"`
+		ParseMode string `json:"parse_mode"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		api.t.Error(err)
+	}
+	if request.ParseMode != "HTML" {
+		api.t.Error("missing HTML parse mode")
 	}
 	api.replies = append(api.replies, request.Text)
 	api.recipients = append(api.recipients, request.ChatID)
@@ -392,7 +396,7 @@ func (api *pipelineTelegram) assertCommitted(chatID int64, text string) {
 	// A separate connection observes both committed mutation and result
 	// before any send attempt, even one that will fail.
 	var stored bool
-	err := api.pool.QueryRow(api.ctx, `SELECT EXISTS (SELECT 1 FROM telegram_updates WHERE user_id=$1 AND response=$2)`, chatID, text).Scan(&stored)
+	err := api.pool.QueryRow(api.ctx, `SELECT EXISTS (SELECT 1 FROM telegram_updates WHERE user_id=$1 AND response=$2)`, chatID, "finbot:html:v1\n"+text).Scan(&stored)
 	if err != nil || !stored {
 		api.t.Error("reply sent before result commit", err)
 	}

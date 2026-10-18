@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Venamuss/FinBot/internal/botresponse"
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/llm"
 )
@@ -187,7 +188,7 @@ func handle(t *testing.T, orchestrator *Orchestrator, model *fakeModel, id, owne
 func TestNaturalLanguageCRUDAndIsolation(t *testing.T) {
 	orchestrator, model, store := setup(t)
 	response := handle(t, orchestrator, model, 1, 101, "кофе 350", "create_expense", `{"amount":"350","category":"еда","spent_at":"today","comment":"кофе"}`)
-	if !strings.Contains(response, "350.00") || store.repo.items[1].SpentAt != "2026-10-17" {
+	if !strings.Contains(response, "350 ₽") || store.repo.items[1].SpentAt != "2026-10-17" {
 		t.Fatal(response)
 	}
 	handle(t, orchestrator, model, 2, 202, "такси 1200 вчера", "create_expense", `{"amount":"1200","category":"транспорт","spent_at":"yesterday","comment":"такси"}`)
@@ -199,7 +200,7 @@ func TestNaturalLanguageCRUDAndIsolation(t *testing.T) {
 		t.Fatal(response)
 	}
 	response = handle(t, orchestrator, model, 4, 101, "сколько потратил на еду в этом месяце", "total_expenses", `{"period":"this_month","category":"еда"}`)
-	if response != "Всего: 350.00" {
+	if !strings.Contains(response, "<b>Всего: 350 ₽</b>") {
 		t.Fatal(response)
 	}
 	handle(t, orchestrator, model, 5, 101, "последнее было не 350, а 450", "update_expense", `{"previous_amount":"350","amount":"450"}`)
@@ -303,7 +304,7 @@ func TestMissingFieldsFailuresAndAuthorizationOrder(t *testing.T) {
 	orchestrator, model, store := setup(t)
 	handle(t, orchestrator, model, 1, 101, "кофе вчера", "clarify", `{"field":"amount"}`)
 	response := handle(t, orchestrator, model, 2, 101, "350", "create_expense", `{"amount":"350","category":"еда","spent_at":"yesterday"}`)
-	if !strings.Contains(response, "350.00") || !strings.Contains(model.request.Messages[0].Content, "кофе вчера") {
+	if !strings.Contains(response, "350 ₽") || !strings.Contains(model.request.Messages[0].Content, "кофе вчера") {
 		t.Fatal("missing-field context lost")
 	}
 	reads, calls := store.reads, model.calls
@@ -395,18 +396,12 @@ func TestReplyLengthAndUnverifiedModelContent(t *testing.T) {
 		items[index] = expense.Expense{ID: 9223372036854775807, Amount: expense.MaxAmount, Category: "развлечения", SpentAt: "9999-12-31", Comment: &comment}
 	}
 	// Telegram's limit is 4096 UTF-16 units; astral runes occupy two units.
-	units := 0
 	filter := expense.OwnerFilter{DateFrom: "9999-12-01", DateTo: "9999-12-31", Category: expense.CategoryEntertainment, Query: comment}
-	reply, shown := formatPage(expense.Page{Items: items, Total: 9999999999}, filter, "this_month", 0)
+	reply, shown := botresponse.Page(expense.Page{Items: items, Total: 9999999999}, filter, "this_month", 0)
 	if shown == 0 || shown >= len(items) || len(listingIDs(t, reply)) != shown || !strings.Contains(reply, "ещё") {
 		t.Fatal("long page lost pagination")
 	}
-	for _, char := range reply {
-		units++
-		if char > 0xffff {
-			units++
-		}
-	}
+	units := botresponse.Length(reply)
 	if units > 4096 {
 		t.Fatalf("reply too long: %d", units)
 	}

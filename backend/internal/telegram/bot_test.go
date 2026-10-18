@@ -70,6 +70,7 @@ func TestProcessLogging(t *testing.T) {
 		{name: "denied C", owner: 303, messages: []string{"Telegram access denied"}},
 		{name: "denial delivery failure", owner: 303, sendErr: privateError, wantErr: privateError, messages: []string{"Telegram access denied", "Telegram denial delivery failed"}},
 		{name: "processing failure", owner: 101, handlerErr: privateError, wantErr: privateError, messages: []string{"Telegram update processing started", "Telegram update processing failed"}},
+		{name: "processing and notification failure", owner: 101, handlerErr: privateError, sendErr: privateError, wantErr: privateError, messages: []string{"Telegram update processing started", "Telegram update processing failed", "Telegram failure notification delivery failed"}},
 		{name: "response delivery failure", owner: 101, sendErr: privateError, wantErr: privateError, messages: []string{"Telegram update processing started", "Telegram update processing completed", "Telegram response delivery failed"}},
 	}
 	for _, test := range cases {
@@ -80,6 +81,9 @@ func TestProcessLogging(t *testing.T) {
 				sent++
 				if chatID != test.owner {
 					t.Fatal("wrong recipient")
+				}
+				if test.handlerErr != nil && text != "Не удалось получить ответ. Пожалуйста, подождите." {
+					t.Fatal("unsafe processing failure notification")
 				}
 				if test.owner == 303 && text != Denied {
 					t.Fatal("missing denial")
@@ -100,7 +104,7 @@ func TestProcessLogging(t *testing.T) {
 			if test.owner == 303 && handled != 0 || test.owner != 303 && handled != 1 {
 				t.Fatal("authorization changed")
 			}
-			if test.handlerErr != nil && sent != 0 || test.handlerErr == nil && sent != 1 {
+			if sent != 1 {
 				t.Fatal("delivery behavior changed")
 			}
 			records := decodeBotLogs(t, output)

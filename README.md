@@ -144,13 +144,14 @@ docker compose down
 |---|---|
 | Создать расход | `еда 500`, `кофе 350` |
 | Указать относительную дату | `такси 1200 вчера` |
-| Посмотреть расходы за сегодня | `мои расходы` |
+| Посмотреть расходы за всё время | `мои расходы` |
+| Посмотреть расходы за сегодня | `мои расходы за сегодня` |
 | Посмотреть последние семь дней | `покажи траты за неделю` |
 | Получить сумму расходов на еду за месяц | `сколько я потратил на еду в этом месяце` |
 | Исправить выбранную трату | `последнее было не 350, а 450` |
 | Удалить расход | `удали последнюю трату`, `удали такси` |
 
-Если период не указан, используется сегодняшний день в `TIME_ZONE` относительно времени исходного сообщения Telegram. «За неделю» включает сегодня и шесть предыдущих дней; «на этой неделе» — период с понедельника. После интерпретации моделью относительные даты вычисляет сервер.
+При просмотре расходов без указания периода, например «мои расходы», показываются расходы за всё время. При создании расхода и подсчёте суммы без указания даты используется сегодняшний день в `TIME_ZONE` относительно времени исходного сообщения Telegram. «За неделю» включает сегодня и шесть предыдущих дней; «на этой неделе» — период с понедельника. После интерпретации моделью относительные даты вычисляет сервер.
 
 Текущая выбранная в диалоге трата имеет приоритет над последней созданной записью. Если выбранной траты нет, «последняя» определяется по `created_at DESC, id DESC`, независимо от даты покупки. Несовпадение предыдущей суммы или несколько подходящих записей вызывают уточнение: ответьте предложенным номером либо отмените выбор текстом. После изменения через панель устаревшую выбранную трату нужно выбрать заново. Контекст выбора истекает через 30 минут и теряется при перезапуске.
 
@@ -415,13 +416,14 @@ Send private text messages to the bot from an allowed account:
 |---|---|
 | Create | `еда 500`, `кофе 350` |
 | Relative date | `такси 1200 вчера` |
-| List today | `мои расходы` |
+| List all dates | `мои расходы` |
+| List today | `мои расходы за сегодня` |
 | Last seven days | `покажи траты за неделю` |
 | Monthly food total | `сколько я потратил на еду в этом месяце` |
 | Correct a selected expense | `последнее было не 350, а 450` |
 | Delete | `удали последнюю трату`, `удали такси` |
 
-No period means today in `TIME_ZONE`, using the original Telegram message timestamp. “За неделю” includes today and the previous six days; “на этой неделе” starts on Monday. Relative dates are resolved by the server after model interpretation.
+Listing without a period, for example “мои расходы”, shows expenses across all dates. Creation and totals without a date default to today in `TIME_ZONE`, using the original Telegram message timestamp. “За неделю” includes today and the previous six days; “на этой неделе” starts on Monday. Relative dates are resolved by the server after model interpretation.
 
 The current conversation focus takes precedence over the most recently created record. With no focus, “last” means `created_at DESC, id DESC`, regardless of purchase date. A mismatched previous amount or multiple matches prompts a text clarification; reply with the offered number or cancel in text. A stale focus after a web edit requires reselection. Focus expires after 30 minutes and is lost on restart.
 

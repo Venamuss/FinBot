@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode/utf16"
 
+	"github.com/Venamuss/FinBot/internal/botresponse"
 	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/observability"
 )
@@ -68,7 +68,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		}
 		next.focus = &item
 		next.pending = nil
-		return "Добавлено: " + expenseSummary(item), nil
+		return botresponse.Created(item), nil
 	case "list_expenses", "total_expenses":
 		filter, err := orchestrator.filter(operation, reference)
 		if err != nil {
@@ -81,7 +81,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 				return operationError(err)
 			}
 			next.pending = nil
-			return "Всего: " + total, nil
+			return botresponse.Total(total, filter, operation.value("period")), nil
 		}
 		limit, offset, err := listingPagination(operation)
 		if err != nil {
@@ -95,7 +95,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		if len(page.Items) == 1 && page.Total == 1 {
 			next.focus = &page.Items[0]
 		}
-		reply, shown := formatPage(page, filter, operation.value("period"), offset)
+		reply, shown := botresponse.Page(page, filter, operation.value("period"), offset)
 		next.listing = &listingContext{
 			DateFrom:   filter.DateFrom,
 			DateTo:     filter.DateTo,
@@ -175,7 +175,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 	}
 	if operation.name == "update_expense" {
 		if _, err := orchestrator.updateInput(operation, reference); err != nil {
-			return invalidRequest, nil
+			return operationError(err)
 		}
 	}
 
@@ -183,7 +183,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 	if operation.args["previous_amount"] != nil {
 		value, err := expense.ParseAmount(operation.value("previous_amount"))
 		if err != nil {
-			return invalidRequest, nil
+			return botresponse.InvalidAmount, nil
 		}
 		previous = value
 	}
@@ -210,7 +210,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 			reference:     reference,
 			confirmAmount: len(candidates) == 1,
 		}
-		return selectionPrompt(candidates, next.pending.confirmAmount), nil
+		return botresponse.Selection(candidates, next.pending.confirmAmount), nil
 	}
 	return orchestrator.applyModification(ctx, service, owner, operation, reference, candidates[0], next)
 }
@@ -272,7 +272,7 @@ func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.O
 	if previous := deferred.action.value("previous_amount"); previous != "" && !deferred.confirmAmount {
 		amount, err := expense.ParseAmount(previous)
 		if err != nil {
-			return invalidRequest, nil
+			return botresponse.InvalidAmount, nil
 		}
 		if selected.Amount != amount {
 			next.pending = &pending{
@@ -282,7 +282,7 @@ func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.O
 				reference:     deferred.reference,
 				confirmAmount: true,
 			}
-			return selectionPrompt(next.pending.candidates, true), nil
+			return botresponse.Selection(next.pending.candidates, true), nil
 		}
 	}
 	// ID, owner and the original version are checked together by the SQL write.
@@ -300,7 +300,7 @@ func (orchestrator *Orchestrator) applyModification(ctx context.Context, service
 		if next.focus != nil && next.focus.ID == selected.ID {
 			next.focus = nil
 		}
-		return "Удалено: " + expenseSummary(selected), nil
+		return botresponse.Deleted(selected), nil
 	}
 	input, err := orchestrator.updateInput(operation, reference)
 	if err != nil {
@@ -312,9 +312,10 @@ func (orchestrator *Orchestrator) applyModification(ctx context.Context, service
 		return operationError(err)
 	}
 	next.focus = &item
-	return "Изменено: " + expenseSummary(item), nil
+	return botresponse.Updated(selected, item), nil
 }
 
+// expenseSummary is compact plain-text model context, never a user-facing reply.
 func expenseSummary(item expense.Expense) string {
 	summary := fmt.Sprintf("#%d · %s · %s · %s", item.ID, item.Amount.String(), item.Category, item.SpentAt)
 	if item.Comment != nil {
@@ -348,79 +349,4 @@ func listingPagination(operation action) (int, int, error) {
 		return 0, 0, errArguments
 	}
 	return limit, offset, nil
-}
-
-func listingHeading(filter expense.OwnerFilter, period string) string {
-	heading := "Все ваши расходы"
-	periodLabels := map[string]string{
-		"today":           "Расходы за сегодня",
-		"yesterday":       "Расходы за вчера",
-		"last_seven_days": "Расходы за последние 7 дней",
-		"this_week":       "Расходы за текущую неделю",
-		"this_month":      "Расходы за текущий месяц",
-	}
-	if label, ok := periodLabels[period]; ok {
-		heading = label
-	}
-	if filter.DateFrom != "" || filter.DateTo != "" {
-		if period == "" {
-			heading = "Ваши расходы"
-		}
-		if filter.DateFrom != "" {
-			heading += " с " + string(filter.DateFrom)
-		}
-		if filter.DateTo != "" {
-			heading += " по " + string(filter.DateTo)
-		}
-	}
-	if filter.Category != "" {
-		heading += "; категория: " + string(filter.Category)
-	}
-	if filter.Query != "" {
-		query := []rune(strings.Join(strings.Fields(filter.Query), " "))
-		if len(query) > 60 {
-			query = append(query[:60], '…')
-		}
-		heading += "; описание содержит: «" + string(query) + "»"
-	}
-	return heading
-}
-
-func formatPage(page expense.Page, filter expense.OwnerFilter, period string, offset int) (string, int) {
-	heading := listingHeading(filter, period)
-	// Leave undisplayed rows for the next page, including when long Unicode
-	// comments make the message hit Telegram's UTF-16 limit before the page limit.
-	for shown := len(page.Items); shown >= 0; shown-- {
-		lines := []string{fmt.Sprintf("%s: показано %d из %d", heading, shown, page.Total)}
-		for _, item := range page.Items[:shown] {
-			lines = append(lines, expenseSummary(item))
-		}
-		if page.Total == 0 {
-			lines = append(lines, "Траты не найдены.")
-		} else if shown == 0 {
-			lines = append(lines, "На этой странице трат нет.")
-		} else {
-			lines = append(lines, fmt.Sprintf("Записи %d–%d.", offset+1, offset+shown))
-			if int64(offset+shown) < page.Total {
-				lines = append(lines, "Для следующей страницы напишите «ещё».")
-			}
-		}
-		reply := strings.Join(lines, "\n")
-		if len(utf16.Encode([]rune(reply))) <= 4096 {
-			return reply, shown
-		}
-	}
-	return invalidFilter, 0
-}
-
-func selectionPrompt(candidates []expense.Expense, confirmAmount bool) string {
-	heading := "Какую трату выбрать? Ответьте номером."
-	if confirmAmount {
-		heading = "Предыдущая сумма не совпадает. Подтвердите выбор номером 1 или отмените действие."
-	}
-	lines := []string{heading}
-	for index, item := range candidates {
-		lines = append(lines, fmt.Sprintf("%d. %s", index+1, expenseSummary(item)))
-	}
-	return strings.Join(lines, "\n")
 }
