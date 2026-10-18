@@ -30,6 +30,7 @@ func (input UpdateInput) Validate() (Changes, error) {
 
 	changes := Changes{Comment: input.Comment, CommentSet: input.CommentSet}
 	fields := ValidationError{}
+
 	if input.UserID != nil {
 		value, err := ParseID(*input.UserID)
 		if err != nil {
@@ -37,6 +38,7 @@ func (input UpdateInput) Validate() (Changes, error) {
 		}
 		changes.UserID = &value
 	}
+
 	if input.Amount != nil {
 		value, err := ParseAmount(*input.Amount)
 		if err != nil {
@@ -44,6 +46,7 @@ func (input UpdateInput) Validate() (Changes, error) {
 		}
 		changes.Amount = &value
 	}
+
 	if input.Category != nil {
 		value, err := ParseCategory(*input.Category)
 		if err != nil {
@@ -51,6 +54,7 @@ func (input UpdateInput) Validate() (Changes, error) {
 		}
 		changes.Category = &value
 	}
+
 	if input.SpentAt != nil {
 		value, err := ParseDate(*input.SpentAt)
 		if err != nil {
@@ -58,9 +62,11 @@ func (input UpdateInput) Validate() (Changes, error) {
 		}
 		changes.SpentAt = &value
 	}
+
 	if input.CommentSet && input.Comment != nil && strings.ContainsRune(*input.Comment, 0) {
 		fields["comment"] = ErrInvalidComment.Error()
 	}
+
 	if len(fields) != 0 {
 		return Changes{}, fields
 	}

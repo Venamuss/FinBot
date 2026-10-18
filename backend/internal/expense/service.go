@@ -44,6 +44,7 @@ func (s *Service) Create(ctx context.Context, input Input) (Expense, error) {
 	if err != nil {
 		return Expense{}, err
 	}
+
 	return s.repo.Create(ctx, validatedExpense)
 }
 
@@ -60,6 +61,7 @@ func (s *Service) Update(ctx context.Context, id int64, input UpdateInput) (Expe
 	if err != nil {
 		return Expense{}, err
 	}
+
 	return s.repo.Update(ctx, id, changes)
 }
 

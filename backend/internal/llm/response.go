@@ -46,6 +46,7 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 			FinishReason string `json:"finish_reason"`
 		} `json:"choices"`
 	}
+
 	if err := json.Unmarshal(body, &envelope); err != nil {
 		return Response{}, ErrInvalidResponse
 	}
@@ -53,6 +54,7 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 	if len(envelope.Choices) != 1 || len(envelope.Error) != 0 {
 		return Response{}, ErrInvalidResponse
 	}
+
 	usage := parseUsage(envelope.Usage)
 	choice := envelope.Choices[0]
 
@@ -72,6 +74,7 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 	default:
 		return Response{}, ErrInvalidResponse
 	}
+
 	// The finish reason is allowlisted above. Never copy other remote strings
 	// into errors or diagnostics, even when argument validation fails below.
 	defer func() {
@@ -103,10 +106,12 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 		if strings.TrimSpace(call.Function.Name) == "" || call.Function.Arguments == nil {
 			return Response{}, ErrInvalidResponse
 		}
+
 		arguments := json.RawMessage(*call.Function.Arguments)
 		if !jsonObject(arguments) {
 			return Response{}, ErrInvalidResponse
 		}
+
 		seenIDs[call.ID] = true
 		response.ToolCalls = append(response.ToolCalls, ToolCall{
 			ID:        call.ID,
@@ -114,6 +119,7 @@ func parseResponse(body []byte, requireExactlyOne bool) (response Response, err 
 			Arguments: arguments,
 		})
 	}
+
 	if requireExactlyOne && len(response.ToolCalls) != 1 {
 		return Response{}, ErrToolCallCount
 	}

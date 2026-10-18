@@ -861,3 +861,82 @@ development database resets or production redeployment were performed.
 Cleanup completed: removed only `finbot-audit-check` containers/network/test
 volume and the standalone `finbot-audit-test-db` container. The three existing
 `finbot-app-1`, `finbot-frontend-1`, and `finbot-db-1` services remained running.
+
+## Architecture Cleanup & Code Readability Review — 2026-10-18
+
+Completed a behavior-preserving review of the backend packages and a lightweight
+frontend review. This is maintenance work; the existing mandatory MVP/manual
+acceptance status is unchanged.
+
+Architecture findings and decisions:
+
+- The modular monolith remains appropriate. Expense validation/services depend
+  on domain types and repository interfaces; HTTP and Telegram parsing stay in
+  their adapters. PostgreSQL implements persistence and the conversation store's
+  transaction callback. The LLM adapter validates the protocol without executing
+  tools. Configuration composes adapter settings; observability supplies safe
+  metadata. No package split, new interface, dependency or schema is justified.
+- `conversation.execute` mixed routing/clarification with complete creation and
+  read operations. Extracted those two cohesive operation bodies into
+  `createExpense` and `readExpenses`, preserving their statements and order.
+- Moved creation into `creation.go`; grouped target selection, patch validation,
+  deferred selection and modification in `modification.go`. Renamed private
+  `modify`/`choose` methods to `modifyExpense`/`chooseExpense`. Grouped read filters
+  with existing pagination in `listing.go`. The static prompt, request context
+  and model-only expense summary now live together in `prompt.go`; prompt text
+  is unchanged. Existing tests retain their focused files in the same package.
+- Reused the existing bounded rollback helper for list transactions instead of
+  duplicating its closure. Moved that common helper from `postgres/telegram.go`
+  into `repository.go`. Context lifetime, timeout, isolation levels, savepoints,
+  SQL, commit order and intentional cleanup-error suppression are unchanged.
+- Added logical spacing in conversation execution/state/context, Telegram
+  processing, configuration, expense validation/services and LLM response
+  validation. For example, `modifyExpense` now visually separates previous-amount
+  parsing, candidate lookup, outcome classification and pending-state creation;
+  `createExpense` separates defaults, date/amount checks, description validation,
+  persistence and response construction.
+- Frontend components and the typed API client remain reasonable for this scope.
+  Expanded compact branches and separated validation, patch preparation and
+  saving in `ExpenseForm` and `MemberNameEditor` (`FamilyMembers.tsx`). No UI,
+  request cancellation, component state or user-facing text changes.
+
+Verification actually executed:
+
+| Check | Result |
+|---|---|
+| Baseline `go test ./... -count=1 -timeout=180s` | Passed with local socket access; integration cases skipped in this initial run because no test DSN was supplied |
+| Baseline AND final `go test -race -json ./... -count=1 -timeout=180s`, with `TEST_DATABASE_URL` pointing exclusively to disposable PostgreSQL 17 at `127.0.0.1:18726` | Both passed: **1,043 tests/subtests each, zero failed or skipped**; migrations has no test files |
+| Mandatory access and data-integrity regressions in the full suite | Passed: allowed A/B and denied C, empty allowlist, owner-scoped reads/writes/totals, repeated standalone `стоп`, delete confirmation, expiry, stale panel changes, rollback, duplicate delivery and failed-response replay |
+| `go vet ./...` | Passed |
+| `gofmt -w` on modified Go files; `gofmt -l backend`; `git diff --check` | Passed; formatting listing empty; final diff and all moved/new production functions reviewed for style and architectural/integrity invariants |
+| Temporary Go AST/token comparison against HEAD | Extracted creation/read bodies match their original switch branches; pre-dispatch routing checks match; all other production function bodies match apart from the reviewed list rollback-helper substitution and two private method renames |
+| Baseline AND final `npm test` | Both passed: **55 tests in four files** |
+| Final `npm run build` | Passed: `tsc --noEmit` and Vite production build |
+| `docker build --network host` for the backend and frontend Dockerfiles, with separate `finbot-readability-review-*:check` image tags | Both passed on final source |
+| Compose `config --quiet` using `/dev/null` env file, explicit synthetic process settings and `/tmp/finbot-readability-compose.yaml` | Passed |
+| Same isolated project with `up -d --no-build --wait --wait-timeout 90`, then `ps --format json` | Passed: app, frontend and database running/healthy; HTTP bound only to `127.0.0.1:18725` |
+| `python3 scripts/smoke.py --url http://127.0.0.1:18725` | Passed: CRUD, member names, partial updates, ownership/reassignment, filters, sorting, pagination and errors |
+
+Initial sandbox attempts could not open test sockets or write the existing Go
+build cache; successful executions above used approved access. Compose's first
+combined build required a BuildKit host-network entitlement; direct Docker builds
+with explicit host networking succeeded. No repository infrastructure changes
+were necessary. Test helpers and comparison/build outputs stayed in `/tmp`.
+
+The disposable Compose containers/network/volume and standalone test database
+were removed after verification. Existing `finbot-app-1`, `finbot-frontend-1` and
+`finbot-db-1` remained running/healthy. No development or production database data
+was modified. The pre-existing user edit to `AGENTS.md` was preserved.
+
+Remaining concerns: conversation routing still has substantial policy detail,
+string-based state/tool names and a long model prompt. These are coupled safety
+rules with extensive regression coverage; further abstraction needs a concrete
+benefit and careful invariant review. The global conversation lock intentionally
+serializes planning through commit under the current sequential polling model;
+changing concurrency would be separate behavior work. `App.tsx` is relatively
+large but its existing form/dialog/API boundaries do not justify a rewrite here.
+
+Optional/manual checks not executed: live Telegram acceptance, live cloud/local
+LLM calls and interactive browser testing. No paid LLM requests or automatic Git
+commits were made. Existing tests were reused without adding implementation-
+mirroring tests because the task introduces no behavior change.

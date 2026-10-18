@@ -37,29 +37,41 @@ export default function ExpenseForm({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (saving) return;
+    if (saving) {
+      return;
+    }
+
     const validation = validateForm(values);
     setErrors(validation);
     if (Object.keys(validation).length > 0) {
       setMessage("Проверьте поля формы.");
       return;
     }
+
     const input = formInput(values, original);
     const patch = original ? changedFields(input, original) : undefined;
     if (patch && Object.keys(patch).length === 0) {
       setMessage("Нет изменений для сохранения.");
       return;
     }
+
     setSaving(true);
     onBusy(true);
     setMessage("");
+
     try {
-      if (original && patch) await api.update(original.id, patch);
-      else await api.create(input);
+      if (original && patch) {
+        await api.update(original.id, patch);
+      } else {
+        await api.create(input);
+      }
+
       onSaved(original ? "Изменения сохранены." : "Расход добавлен.");
     } catch (error) {
       setMessage(errorMessage(error));
-      if (error instanceof ApiError) setErrors(error.fields);
+      if (error instanceof ApiError) {
+        setErrors(error.fields);
+      }
     } finally {
       setSaving(false);
       onBusy(false);

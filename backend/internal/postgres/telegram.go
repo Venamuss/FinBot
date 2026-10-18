@@ -40,6 +40,7 @@ func NewTelegramStore(pool *pgxpool.Pool) *TelegramStore {
 func (store *TelegramStore) Lookup(ctx context.Context, updateID, owner int64) (string, bool, error) {
 	ctx, cancel := context.WithTimeout(ctx, updateTimeout)
 	defer cancel()
+
 	return lookupResponse(ctx, store.pool, updateID, owner)
 }
 
@@ -106,6 +107,7 @@ func (store *TelegramStore) executeOnce(ctx context.Context, updateID, owner int
 		return "", false, &transactionError{stage: "begin", cause: err}
 	}
 	defer rollbackTransaction(tx)
+
 	result, err := tx.Exec(ctx, `
   INSERT INTO telegram_updates (update_id, user_id, response)
   VALUES ($1, $2, '')
@@ -128,7 +130,6 @@ func (store *TelegramStore) executeOnce(ctx context.Context, updateID, owner int
 
 	repo := &Repository{pool: store.pool, db: tx, tx: tx}
 	response, err := execute(ctx, repo)
-
 	if err != nil {
 		return "", false, &transactionError{stage: "execute", cause: err}
 	}
@@ -140,18 +141,11 @@ func (store *TelegramStore) executeOnce(ctx context.Context, updateID, owner int
 	if err != nil {
 		return "", false, &transactionError{stage: "save_response", cause: err}
 	}
+
 	if err := tx.Commit(ctx); err != nil {
 		// An uncertain commit is retried by update ID, never assumed to have failed.
 		return "", false, &transactionError{stage: "commit", cause: err}
 	}
 
 	return response, true, nil
-}
-
-func rollbackTransaction(tx pgx.Tx) {
-	cleanupCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
-	defer cancel()
-	// Preserve the original error; pgx discards unusable connections. Also, safe
-	// after a successful Commit, when Rollback returns ErrTxClosed.
-	_ = tx.Rollback(cleanupCtx)
 }

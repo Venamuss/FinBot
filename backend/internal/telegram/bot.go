@@ -62,8 +62,10 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 		}
 		return err
 	}
+
 	started := time.Now()
 	logger.DebugContext(ctx, "Telegram update processing started")
+
 	response, err := bot.handle(ctx, update.ID, message.From.ID, message.Text, time.Unix(message.Date, 0))
 	if err != nil {
 		if ctx.Err() == nil {
@@ -75,13 +77,16 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 		}
 		return err
 	}
+
 	logger.InfoContext(ctx, "Telegram update processing completed", "duration_ms", time.Since(started).Milliseconds())
+
 	if err := bot.api.Send(ctx, message.Chat.ID, response); err != nil {
 		if ctx.Err() == nil {
 			logger.ErrorContext(ctx, "Telegram response delivery failed", "error_category", errorCategory(err))
 		}
 		return err
 	}
+
 	logger.InfoContext(ctx, "Telegram response delivered")
 	return nil
 }
@@ -89,6 +94,7 @@ func (bot *Bot) Process(ctx context.Context, update Update) error {
 func (bot *Bot) Run(ctx context.Context, retryDelay time.Duration) error {
 	logger := observability.Logger(ctx, "telegram", "poll")
 	var offset int64
+
 	for ctx.Err() == nil {
 		updates, err := bot.api.Updates(ctx, offset)
 		if err == nil {
@@ -104,6 +110,7 @@ func (bot *Bot) Run(ctx context.Context, retryDelay time.Duration) error {
 				offset = update.ID + 1
 			}
 		}
+
 		if err != nil {
 			// Keep the unacknowledged update for retry, including failed delivery after
 			// commit. The handler must replay its stored result without another mutation.
@@ -115,6 +122,7 @@ func (bot *Bot) Run(ctx context.Context, retryDelay time.Duration) error {
 			}
 		}
 	}
+
 	return ctx.Err()
 }
 

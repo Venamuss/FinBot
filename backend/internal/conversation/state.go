@@ -33,6 +33,7 @@ func (current state) stateType() string {
 	if _, known := clarificationQuestions[current.pending.field]; known {
 		return "awaiting_" + current.pending.field
 	}
+
 	return "awaiting_request"
 }
 
@@ -46,6 +47,7 @@ func pendingQuestion(current *pending) string {
 		}
 		return "Сначала завершите выбор: ответьте номером предложенной траты или отмените действие."
 	}
+
 	return clarificationQuestions[current.field]
 }
 
@@ -69,6 +71,7 @@ func toolsForState(current state) []llm.Tool {
 		}
 		available = append(available, definition)
 	}
+
 	return available
 }
 
@@ -103,6 +106,7 @@ func copyAction(operation action) action {
 	for field, value := range operation.args {
 		result.args[field] = value
 	}
+
 	return result
 }
 
@@ -119,6 +123,7 @@ func mergeDraft(original action, answer action, field string) action {
 			merged.args[key] = value
 		}
 	}
+
 	return merged
 }
 
@@ -130,24 +135,29 @@ func (orchestrator *Orchestrator) validateDraft(operation action, reference time
 			}
 		}
 	}
+
 	if operation.args["category"] != nil {
 		if _, err := expense.ParseCategory(operation.value("category")); err != nil {
 			return expense.ValidationError{"category": "invalid"}
 		}
 	}
+
 	if operation.args["spent_at"] != nil {
 		if _, err := orchestrator.date(operation.value("spent_at"), reference); err != nil {
 			return expense.ValidationError{"spent_at": "invalid"}
 		}
 	}
+
 	if operation.args["id"] != nil {
 		if _, err := expense.ParseID(operation.value("id")); err != nil {
 			return err
 		}
 	}
+
 	if operation.args["comment"] != nil && strings.ContainsRune(operation.value("comment"), 0) {
 		return expense.ValidationError{"comment": "invalid"}
 	}
+
 	return nil
 }
 
@@ -161,6 +171,7 @@ func (orchestrator *Orchestrator) clarify(ctx context.Context, operation action,
 	for _, metadata := range []string{"field", "intent", "request_context"} {
 		delete(draft.args, metadata)
 	}
+
 	if next.pending != nil {
 		previous := next.pending
 		if previous.action.name != "" && draft.name != "" && previous.action.name != draft.name {
@@ -183,9 +194,11 @@ func (orchestrator *Orchestrator) clarify(ctx context.Context, operation action,
 		}
 		text = previous.text + "\n" + text
 	}
+
 	if err := orchestrator.validateDraft(draft, reference); err != nil {
 		return action{}, reference, "", err
 	}
+
 	if field == "category" && draft.name == "create_expense" {
 		if draft.value("amount") != "" {
 			return draft, reference, "", nil
@@ -193,6 +206,7 @@ func (orchestrator *Orchestrator) clarify(ctx context.Context, operation action,
 		// A creation has a category fallback; only its missing amount needs asking.
 		field = "amount"
 	}
+
 	if len(text) > 16384 {
 		next.pending = nil
 		return action{}, reference, "Уточните запрос одним сообщением.", nil
@@ -222,13 +236,16 @@ func (orchestrator *Orchestrator) answer(ctx context.Context, operation action, 
 			return action{}, reference, rejectStateTool(ctx, next, "answer_clarification"), nil
 		}
 	}
+
 	draft.args[current.field] = operation.args["value"]
 	if operation.args["amount"] != nil {
 		draft.args["amount"] = operation.args["amount"]
 	}
+
 	if err := orchestrator.validateDraft(draft, current.reference); err != nil {
 		return action{}, reference, "", err
 	}
+
 	if draft.name == "create_expense" && draft.value("amount") == "" {
 		field := "amount"
 		draft.args["field"] = &field
@@ -236,5 +253,6 @@ func (orchestrator *Orchestrator) answer(ctx context.Context, operation action, 
 		draft.args["intent"] = &intent
 		return orchestrator.clarify(ctx, draft, text, current.reference, next)
 	}
+
 	return draft, current.reference, "", nil
 }

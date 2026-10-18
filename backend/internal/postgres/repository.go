@@ -27,6 +27,16 @@ type Repository struct {
 
 const rollbackTimeout = time.Second
 
+func rollbackTransaction(tx pgx.Tx) {
+	// Cleanup outlives request cancellation but remains bounded if the connection
+	// is unavailable. pgx discards unusable connections; preserve the original error.
+	cleanupCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
+	defer cancel()
+
+	// Safe after a successful Commit, when Rollback returns ErrTxClosed.
+	_ = tx.Rollback(cleanupCtx)
+}
+
 func New(pool *pgxpool.Pool) *Repository {
 	return &Repository{pool: pool, db: pool}
 }
@@ -225,13 +235,7 @@ func (r *Repository) list(ctx context.Context, filter expense.Filter, queryText 
 	if err != nil {
 		return expense.Page{}, err
 	}
-	defer func() {
-		// Cleanup must outlive request cancellation but stay bounded if the connection
-		// is unavailable. Preserve the operation's error; pgx discards a failed connection.
-		cleanupCtx, cancel := context.WithTimeout(context.Background(), rollbackTimeout)
-		defer cancel()
-		_ = tx.Rollback(cleanupCtx)
-	}()
+	defer rollbackTransaction(tx)
 
 	page := expense.Page{
 		Items:  []expense.Expense{},

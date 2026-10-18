@@ -27,6 +27,15 @@
 - Handle errors explicitly; wrap them with useful context when appropriate. Make intentional error suppression clear.
 - Write comments to explain intent, invariants, and non-obvious decisions, not to narrate obvious code.
 
+### Logical Block Spacing
+
+- Separate meaningful logical sections inside Go functions with blank lines.
+- Use blank lines between validation, parsing, database operations, state updates, and response construction when they represent distinct steps.
+- Do not compress error handling into one-line statements.
+- Prefer visually structured, readable code over dense formatting.
+- Avoid excessive blank lines between tightly related statements.
+- Apply these conventions consistently, even when modifying existing functions.
+
 ## Database and Data Integrity
 
 - Use parameterized SQL for data values. SQL identifiers and sort expressions must come from fixed allowlists.

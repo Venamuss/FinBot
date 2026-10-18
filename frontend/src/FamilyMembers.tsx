@@ -22,26 +22,38 @@ function MemberNameEditor({
 
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (busy) return;
+    if (busy) {
+      return;
+    }
+
     const displayName = name.trim();
     const validation: Record<string, string> = {};
-    if (!validID(userId))
+    if (!validID(userId)) {
       validation.user_id =
         "Укажите Telegram ID от 1 до 9223372036854775807 без ведущих нулей.";
+    }
+
     if ([...displayName].length > 100 || /\p{Cc}/u.test(displayName)) {
       validation.display_name =
         "Имя должно содержать не более 100 символов без управляющих символов.";
     }
+
     setFields(validation);
     setError("");
-    if (Object.keys(validation).length) return;
+    if (Object.keys(validation).length) {
+      return;
+    }
+
     setBusy(true);
+
     try {
       const saved = await api.setMemberName(userId, displayName || null);
       onSaved(saved);
     } catch (error) {
       setError(errorMessage(error));
-      if (error instanceof ApiError) setFields(error.fields);
+      if (error instanceof ApiError) {
+        setFields(error.fields);
+      }
     } finally {
       setBusy(false);
     }
