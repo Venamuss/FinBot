@@ -5,7 +5,6 @@ import (
 	"errors"
 	"html"
 	"slices"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -49,18 +48,25 @@ func TestHTMLPaginationAdvancesByShownRows(t *testing.T) {
 		store.repo.items[id] = item
 	}
 	var seen []int64
+	var pages []string
 	offset := 0
-	for update := int64(1); offset < 20; update++ {
-		reply := handle(t, orchestrator, model, update, 101, "synthetic", "list_expenses", `{"offset":"`+strconv.Itoa(offset)+`"}`)
+	update := int64(1)
+	for ; offset < 20; update++ {
+		name, args := "navigate_expenses", `{"direction":"next"}`
+		if update == 1 {
+			name, args = "list_expenses", `{}`
+		}
+		reply := handle(t, orchestrator, model, update, 101, "synthetic", name, args)
 		ids := listingIDs(t, reply)
 		if len(ids) < 1 || botresponse.Length(reply) > botresponse.MessageLimit {
 			t.Fatal("pagination stalled or message too long")
 		}
 		offset += len(ids)
-		if orchestrator.states[101].listing.NextOffset != offset {
+		if orchestrator.states[101].listing.NextOffset != int64(offset) {
 			t.Fatal("offset skipped undisplayed rows")
 		}
 		seen = append(seen, ids...)
+		pages = append(pages, reply)
 	}
 	want := make([]int64, 20)
 	for index := range want {
@@ -68,6 +74,23 @@ func TestHTMLPaginationAdvancesByShownRows(t *testing.T) {
 	}
 	if !slices.Equal(seen, want) {
 		t.Fatalf("missing or duplicate rows: %v", seen)
+	}
+	if len(pages) < 3 {
+		t.Fatal("test must exercise multiple message-limited pages")
+	}
+	for index := len(pages) - 2; index >= 0; index-- {
+		reply := handle(t, orchestrator, model, update, 101, "назад", "navigate_expenses", `{"direction":"previous"}`)
+		update++
+		if reply != pages[index] {
+			t.Fatalf("message-limited previous page %d changed: %s", index, reply)
+		}
+	}
+	for index := 1; index < len(pages); index++ {
+		reply := handle(t, orchestrator, model, update, 101, "ещё", "navigate_expenses", `{"direction":"next"}`)
+		update++
+		if reply != pages[index] {
+			t.Fatalf("message-limited next page %d changed: %s", index, reply)
+		}
 	}
 }
 

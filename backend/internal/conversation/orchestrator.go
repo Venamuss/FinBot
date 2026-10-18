@@ -74,9 +74,12 @@ Use list_expenses for viewing expenses, including "мои траты", "мои �
 set period, date_from and date_to to null, even after a previously filtered list.
 Treat independent listing requests as new queries: never copy filters from focus,
 pending_request or previous_listing. Reuse previous_listing only for explicit
-follow-ups such as "следующая страница", "ещё" or "из них только еда".
-For the next page, copy its filters and limit and use its next_offset as offset.
-Otherwise default offset to null (zero). "последние 5 трат" means limit="5",
+refinements such as "из них только еда"; refinements start at the first page.
+For "ещё", "дальше" or "следующая страница", use navigate_expenses(direction="next").
+For "назад" or "предыдущая страница", use navigate_expenses(direction="previous").
+Navigation preserves filters and page size on the server. Never calculate or
+supply offsets. list_expenses always starts at the first page.
+"последние 5 трат" means limit="5",
 with no date restriction. Default limit is 20, maximum 20, ordered by expense date
 descending with ID as tie-breaker. For totals only, no date still means today.
 Never ask for a date for a list or total. Use period="today" for today.
@@ -85,7 +88,7 @@ Never ask for a date for a list or total. Use period="today" for today.
 categories; never split it into calls per category. Use total_expenses only for
 a sum. Use either period OR date_from/date_to, never both. For list/total, set
 unused filters to null. An unfiltered list is {"period":null,"date_from":null,
-"date_to":null,"category":null,"query":null,"limit":null,"offset":null}.
+"date_to":null,"category":null,"query":null,"limit":null}.
 For list/total, never invent category, query, or date bounds.
 For other tools, omit unused optional arguments; never send empty strings.
 query is only a literal expense description, never the whole request or a wildcard.
@@ -128,7 +131,12 @@ type listingContext struct {
 	Category   expense.Category
 	Query      string
 	Limit      int
-	NextOffset int
+	Period     string
+	Offset     int
+	NextOffset int64
+	Total      int64
+	// Message length can shorten a page, so subtraction by Limit is unsafe.
+	PreviousOffsets []int
 }
 
 type Orchestrator struct {
@@ -260,8 +268,9 @@ func (orchestrator *Orchestrator) request(text string, reference time.Time, curr
 	if current.listing != nil {
 		listing := current.listing
 		previous := map[string]any{
-			"limit":       strconv.Itoa(listing.Limit),
-			"next_offset": strconv.Itoa(listing.NextOffset),
+			"limit":        strconv.Itoa(listing.Limit),
+			"has_previous": len(listing.PreviousOffsets) > 0,
+			"has_next":     listing.NextOffset < listing.Total,
 		}
 		for field, value := range map[string]string{
 			"date_from": string(listing.DateFrom),

@@ -26,7 +26,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 	if independent {
 		next.pending = nil
 	}
-	if next.pending.selecting() && operation.name != "list_expenses" && operation.name != "total_expenses" {
+	if next.pending.selecting() && operation.name != "list_expenses" && operation.name != "navigate_expenses" && operation.name != "total_expenses" {
 		return rejectStateTool(ctx, next, operation.name), nil
 	}
 	if next.pending != nil && (operation.name == "update_expense" || operation.name == "delete_expense") && next.pending.action.name != operation.name {
@@ -85,11 +85,13 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		}
 		operation, reference = planned, dateReference
 	}
-	if next.pending != nil && !next.pending.selecting() && operation.name != "list_expenses" && operation.name != "total_expenses" {
+	if next.pending != nil && !next.pending.selecting() && operation.name != "list_expenses" && operation.name != "navigate_expenses" && operation.name != "total_expenses" {
 		reference = next.pending.reference
 	}
 
 	switch operation.name {
+	case "navigate_expenses":
+		return orchestrator.navigateListing(ctx, service, owner, operation.value("direction"), next)
 	case "create_expense":
 		operation = copyAction(operation)
 		if operation.value("category") == "" {
@@ -131,28 +133,19 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 			next.pending = nil
 			return botresponse.Total(total, filter, operation.value("period")), nil
 		}
-		limit, offset, err := listingPagination(operation)
+		limit, err := listingLimit(operation)
 		if err != nil {
 			return invalidFilter, nil
 		}
-		page, err := service.List(ctx, owner, filter, limit, offset)
-		if err != nil {
-			return operationError(ctx, err)
+		listing := listingContext{
+			DateFrom: filter.DateFrom,
+			DateTo:   filter.DateTo,
+			Category: filter.Category,
+			Query:    filter.Query,
+			Limit:    limit,
+			Period:   operation.value("period"),
 		}
-		next.pending = nil
-		if len(page.Items) == 1 && page.Total == 1 {
-			next.focus = &page.Items[0]
-		}
-		reply, shown := botresponse.Page(page, filter, operation.value("period"), offset)
-		next.listing = &listingContext{
-			DateFrom:   filter.DateFrom,
-			DateTo:     filter.DateTo,
-			Category:   filter.Category,
-			Query:      filter.Query,
-			Limit:      limit,
-			NextOffset: offset + shown,
-		}
-		return reply, nil
+		return orchestrator.listPage(ctx, service, owner, listing, next)
 	case "update_expense", "delete_expense":
 		return orchestrator.modify(ctx, service, owner, operation, text, reference, next)
 	default:
@@ -380,27 +373,4 @@ func expenseSummary(item expense.Expense) string {
 		summary += " · " + string(comment)
 	}
 	return summary
-}
-
-func listingPagination(operation action) (int, int, error) {
-	limit, offset := 20, 0
-	for _, field := range []string{"limit", "offset"} {
-		value := operation.value(field)
-		if value == "" {
-			continue
-		}
-		parsed, err := strconv.Atoi(value)
-		if err != nil || strconv.Itoa(parsed) != value || parsed < 0 || parsed > 2147483647 {
-			return 0, 0, errArguments
-		}
-		if field == "limit" {
-			limit = parsed
-		} else {
-			offset = parsed
-		}
-	}
-	if limit < 1 || limit > 20 {
-		return 0, 0, errArguments
-	}
-	return limit, offset, nil
 }

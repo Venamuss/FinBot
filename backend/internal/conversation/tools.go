@@ -28,8 +28,14 @@ var toolSpecs = map[string]toolSpec{
 		required:    []string{"amount", "spent_at"},
 	},
 	"list_expenses": {
-		description: `List own expenses: "мои траты", "мои расходы", "траты", "покажи расходы". No period requested means ALL dates; set dates and period to null. Independent requests never inherit previous filters. Reuse previous_listing only for explicit follow-ups. One call covers all categories. Set unrequested arguments to null. Use period OR date_from/date_to, never both. за неделю = last_seven_days; на этой неделе = this_week; за месяц = this_month. "последние 5 трат" = limit "5", no dates.`,
-		fields:      []string{"period", "date_from", "date_to", "category", "query", "limit", "offset"},
+		description: `Start a new listing of own expenses at the first page: "мои траты", "мои расходы", "траты", "покажи расходы". No period requested means ALL dates; set dates and period to null. Independent requests never inherit previous filters. Reuse previous_listing filters only for explicit refinements such as "из них только еда"; refinements also start at the first page. For next/previous pages use navigate_expenses instead. One call covers all categories. Set unrequested arguments to null. Use period OR date_from/date_to, never both. за неделю = last_seven_days; на этой неделе = this_week; за месяц = this_month. "последние 5 трат" = limit "5", no dates.`,
+		fields:      []string{"period", "date_from", "date_to", "category", "query", "limit"},
+		strict:      true,
+	},
+	"navigate_expenses": {
+		description: `Navigate the previous listing without changing its filters or page size. "ещё", "дальше", "следующая страница" = next; "назад", "предыдущая страница" = previous. The server calculates page positions; never invent offsets.`,
+		fields:      []string{"direction"},
+		required:    []string{"direction"},
 		strict:      true,
 	},
 	"total_expenses": {
@@ -131,9 +137,8 @@ func toolsForModel() []llm.Tool {
 			case "limit":
 				property["pattern"] = "^([1-9]|1[0-9]|20)$"
 				property["description"] = "Page size as a decimal string, 1..20. Null defaults to 20. Use 5 for последние 5 трат."
-			case "offset":
-				property["pattern"] = "^(0|[1-9][0-9]*)$"
-				property["description"] = "Number of matches to skip, 0..2147483647, as a decimal string. Null defaults to zero. Use previous_listing.next_offset only for an explicit next-page request."
+			case "direction":
+				property["enum"] = []string{"next", "previous"}
 			case "date_from", "date_to":
 				property["pattern"] = `^[0-9]{4}-[0-9]{2}-[0-9]{2}$`
 				property["description"] = "Inclusive YYYY-MM-DD boundary, only for an explicit date range. Null when using period."
@@ -238,6 +243,9 @@ func parseAction(response llm.Response) (action, error) {
 		return action{}, errArguments
 	}
 	if value := args["request_context"]; value != nil && *value != "new" && *value != "followup" {
+		return action{}, errArguments
+	}
+	if value := args["direction"]; value != nil && *value != "next" && *value != "previous" {
 		return action{}, errArguments
 	}
 	if value := args["intent"]; value != nil && *value != "create_expense" && *value != "update_expense" {

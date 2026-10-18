@@ -107,7 +107,7 @@ func TestListingPaginationAndIndependentRequests(t *testing.T) {
 	if !strings.Contains(first, "Записи 1–20 из 25.") || len(listingIDs(t, first)) != 20 || !strings.Contains(first, "ещё") {
 		t.Fatal(first)
 	}
-	second := handle(t, orchestrator, model, 2, 101, "ещё", "list_expenses", `{"date_from":"2026-10-11","date_to":"2026-10-17","offset":"20"}`)
+	second := handle(t, orchestrator, model, 2, 101, "ещё", "navigate_expenses", `{"direction":"next"}`)
 	if !strings.Contains(second, "Записи 21–25 из 25.") || !slices.Equal(listingIDs(t, second), []int64{5, 4, 3, 2, 1}) || strings.Contains(second, "ещё") {
 		t.Fatal(second)
 	}
@@ -119,7 +119,7 @@ func TestListingPaginationAndIndependentRequests(t *testing.T) {
 	if err := json.Unmarshal(data["previous_listing"], &previous); err != nil {
 		t.Fatal(err)
 	}
-	if previous["next_offset"] != "20" || previous["limit"] != "20" || previous["date_from"] != "2026-10-11" || previous["query"] != nil {
+	if previous["has_next"] != true || previous["has_previous"] != false || previous["limit"] != "20" || previous["date_from"] != "2026-10-11" || previous["query"] != nil {
 		t.Fatalf("incorrect follow-up context: %v", previous)
 	}
 	for index, text := range []string{"мои траты", "мои расходы", "траты", "покажи расходы"} {
@@ -128,7 +128,7 @@ func TestListingPaginationAndIndependentRequests(t *testing.T) {
 			t.Fatal("independent request inherited a previous date or offset:", reply)
 		}
 	}
-	last := handle(t, orchestrator, model, 7, 101, "ещё", "list_expenses", `{"offset":"20"}`)
+	last := handle(t, orchestrator, model, 7, 101, "ещё", "navigate_expenses", `{"direction":"next"}`)
 	if !strings.Contains(last, "Записи 21–26 из 26.") || !slices.Equal(listingIDs(t, last), []int64{5, 4, 3, 2, 1, 26}) {
 		t.Fatal(last)
 	}
@@ -169,7 +169,7 @@ func TestListingOptionalDateAndFilters(t *testing.T) {
 	}{
 		{name: "my spending", text: "мои траты", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
 		{name: "my expenses", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
-		{name: "all optional arguments null", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null,"limit":null,"offset":null}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
+		{name: "all optional arguments null", text: "мои расходы", tool: "list_expenses", args: `{"period":null,"date_from":null,"date_to":null,"category":null,"query":null,"limit":null}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
 		{name: "spending", text: "траты", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
 		{name: "show expenses", text: "покажи расходы", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
 		{name: "all today", text: "покажи все расходы за сегодня", tool: "list_expenses", args: `{"period":"today","date_from":null,"date_to":null,"category":null,"query":null}`, want: "🧾 Мои расходы\n2 записи · За сегодня · 17 октября 2026"},
@@ -215,8 +215,8 @@ func TestListingArgumentErrors(t *testing.T) {
 		{name: "conflicting date modes", args: `{"period":"today","date_from":"2026-10-17","date_to":"2026-10-17"}`, want: invalidFilter},
 		{name: "zero limit", args: `{"limit":"0"}`, want: invalidFilter},
 		{name: "oversized page", args: `{"limit":"21"}`, want: invalidFilter},
-		{name: "negative offset", args: `{"offset":"-1"}`, want: invalidFilter},
-		{name: "huge offset", args: `{"offset":"2147483648"}`, want: invalidFilter},
+		{name: "negative offset", args: `{"offset":"-1"}`, want: invalidRequest},
+		{name: "huge offset", args: `{"offset":"2147483648"}`, want: invalidRequest},
 		{name: "noncanonical limit", args: `{"limit":"05"}`, want: invalidFilter},
 		{name: "numeric limit", args: `{"limit":5}`, want: invalidRequest},
 	}
@@ -317,7 +317,7 @@ func TestReadToolSchemas(t *testing.T) {
 		}
 		fields := 5
 		if tool.Function.Name == "list_expenses" {
-			fields = 7
+			fields = 6
 		}
 		if !tool.Function.Strict || schema.AdditionalProperties || len(schema.Properties) != fields || len(schema.Required) != fields {
 			t.Fatal("read schema must be strict with nullable optional arguments")
