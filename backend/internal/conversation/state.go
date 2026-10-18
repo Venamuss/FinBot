@@ -79,8 +79,11 @@ func explicitCancellation(text string) bool {
 }
 
 func cancelPending(ctx context.Context, text string, next *state) string {
-	if next.pending == nil || !explicitCancellation(text) {
+	if !explicitCancellation(text) {
 		return rejectStateTool(ctx, next, "cancel_request")
+	}
+	if next.pending == nil {
+		return "Нет активной операции для отмены."
 	}
 	next.pending = nil
 	return "Выбор отменён."

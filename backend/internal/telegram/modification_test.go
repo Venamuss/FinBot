@@ -23,13 +23,14 @@ import (
 // Scripted HTTP APIs exercise the actual tool parser, Telegram adapter, owner
 // services and PostgreSQL transactions. They do not test model interpretation.
 type modificationWorkflow struct {
-	t       *testing.T
-	pool    *pgxpool.Pool
-	bot     *Bot
-	plan    llm.Response
-	calls   atomic.Int32
-	replies chan string
-	update  Update
+	t         *testing.T
+	pool      *pgxpool.Pool
+	bot       *Bot
+	plan      llm.Response
+	calls     atomic.Int32
+	mutations atomic.Int32
+	replies   chan string
+	update    Update
 }
 
 func newModificationWorkflow(t *testing.T) *modificationWorkflow {
@@ -44,7 +45,8 @@ func newModificationWorkflow(t *testing.T) *modificationWorkflow {
 	telegramAPI := httptest.NewServer(http.HandlerFunc(workflow.deliver))
 	t.Cleanup(telegramAPI.Close)
 	allowed := map[int64]bool{101: true, 202: true}
-	orchestrator := conversation.New(model, postgres.NewTelegramStore(workflow.pool), allowed, time.UTC)
+	store := &mutationCountingStore{Store: postgres.NewTelegramStore(workflow.pool), calls: &workflow.mutations}
+	orchestrator := conversation.New(model, store, allowed, time.UTC)
 	workflow.bot = NewBot(testClient(telegramAPI), allowed, orchestrator.Handle)
 	return workflow
 }

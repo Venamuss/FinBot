@@ -226,38 +226,45 @@ func (orchestrator *Orchestrator) Handle(ctx context.Context, updateID, owner in
 	current.touched = now
 	orchestrator.states[owner] = current
 
-	planned, err := orchestrator.model.Complete(ctx, orchestrator.request(text, reference, current))
-	if err != nil {
-		if ctx.Err() != nil {
-			return "", ctx.Err()
+	// Cancellation is a control command, never a model-selected expense action.
+	// It uses the same commit/replay boundary as all other conversation changes.
+	operation := action{name: "cancel_request"}
+	if explicitCancellation(text) {
+		observability.Logger(ctx, "conversation", "route_action").InfoContext(ctx, "Cancellation command recognized", "state_type", current.stateType(), "tool", operation.name)
+	} else {
+		planned, err := orchestrator.model.Complete(ctx, orchestrator.request(text, reference, current))
+		if err != nil {
+			if ctx.Err() != nil {
+				return "", ctx.Err()
+			}
+			if errors.Is(err, llm.ErrToolCallCount) || errors.Is(err, llm.ErrInvalidResponse) {
+				return orchestrator.saveReply(ctx, updateID, owner, invalidModelResponse)
+			}
+			// Persist a safe failure result so one poison update cannot block polling.
+			return orchestrator.saveReply(ctx, updateID, owner, botresponse.Unavailable)
 		}
-		if errors.Is(err, llm.ErrToolCallCount) || errors.Is(err, llm.ErrInvalidResponse) {
-			return orchestrator.saveReply(ctx, updateID, owner, invalidModelResponse)
-		}
-		// Persist a safe failure result so one poison update cannot block polling.
-		return orchestrator.saveReply(ctx, updateID, owner, botresponse.Unavailable)
-	}
 
-	planLogger := observability.Logger(ctx, "conversation", "plan_action").With(
-		"tool_call_count", len(planned.ToolCalls), "state_type", current.stateType())
-	if len(planned.ToolCalls) == 1 {
-		name := planned.ToolCalls[0].Name
-		if _, known := toolSpecs[name]; known {
-			planLogger = planLogger.With("tool", name, "action_category", name)
+		planLogger := observability.Logger(ctx, "conversation", "plan_action").With(
+			"tool_call_count", len(planned.ToolCalls), "state_type", current.stateType())
+		if len(planned.ToolCalls) == 1 {
+			name := planned.ToolCalls[0].Name
+			if _, known := toolSpecs[name]; known {
+				planLogger = planLogger.With("tool", name, "action_category", name)
+			}
 		}
-	}
-	operation, err := parseAction(planned)
-	if err != nil {
-		category := "arguments"
-		var invalid *argumentError
-		if errors.As(err, &invalid) {
-			category = invalid.category
+		operation, err = parseAction(planned)
+		if err != nil {
+			category := "arguments"
+			var invalid *argumentError
+			if errors.As(err, &invalid) {
+				category = invalid.category
+			}
+			planLogger.WarnContext(ctx, "Conversation action rejected", "error_category", "invalid_tool_call", "stage", "tool_arguments", "validation_category", category)
+			return orchestrator.saveReply(ctx, updateID, owner, invalidRequest)
 		}
-		planLogger.WarnContext(ctx, "Conversation action rejected", "error_category", "invalid_tool_call", "stage", "tool_arguments", "validation_category", category)
-		return orchestrator.saveReply(ctx, updateID, owner, invalidRequest)
-	}
 
-	planLogger.InfoContext(ctx, "Conversation action selected")
+		planLogger.InfoContext(ctx, "Conversation action selected")
+	}
 
 	var next state
 	response, committed, err := orchestrator.store.Execute(ctx, updateID, owner, func(transactionCtx context.Context, repo Repositories) (string, error) {
