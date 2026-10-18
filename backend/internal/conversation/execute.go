@@ -16,45 +16,93 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 	service := expense.NewOwnerService(repo)
 
 	if operation.name == "choose_expense" {
-		return orchestrator.choose(ctx, service, owner, operation, next)
+		return orchestrator.choose(ctx, service, owner, operation, text, next)
+	}
+	if operation.name == "cancel_request" {
+		return cancelPending(ctx, text, next), nil
+	}
+	independent := operation.value("request_context") == "new" ||
+		(operation.name == "create_expense" && operation.value("request_context") != "followup")
+	if independent {
+		next.pending = nil
+	}
+	if next.pending.selecting() && operation.name != "list_expenses" && operation.name != "total_expenses" {
+		return rejectStateTool(ctx, next, operation.name), nil
+	}
+	if next.pending != nil && (operation.name == "update_expense" || operation.name == "delete_expense") && next.pending.action.name != operation.name {
+		return rejectStateTool(ctx, next, operation.name), nil
+	}
+	if next.pending != nil && operation.name == "update_expense" && next.pending.action.name == "update_expense" {
+		value := operation.args[next.pending.field]
+		if value == nil {
+			return rejectStateTool(ctx, next, operation.name), nil
+		}
+		// A field reply cannot supply a different record ID or unrelated changes.
+		args := map[string]*string{"value": value}
+		if next.pending.field == "currency" && operation.args["amount"] != nil {
+			args["amount"] = operation.args["amount"]
+		}
+		operation = action{name: "answer_clarification", args: args}
+	}
+
+	if operation.name == "answer_clarification" {
+		planned, dateReference, reply, err := orchestrator.answer(ctx, operation, text, reference, next)
+		if err != nil {
+			return operationError(ctx, err)
+		}
+		if reply != "" {
+			return reply, nil
+		}
+		operation, reference = planned, dateReference
+	} else if next.pending != nil && operation.value("request_context") == "followup" &&
+		(operation.name == "create_expense" || operation.name == "update_expense") {
+		if next.pending.action.name != "" && next.pending.action.name != operation.name {
+			return rejectStateTool(ctx, next, operation.name), nil
+		}
+		if next.pending.field == "currency" && explicitRubles(text) && !unsupportedCurrency(text) && operation.args["currency"] == nil {
+			operation = copyAction(operation)
+			currency := "RUB"
+			operation.args["currency"] = &currency
+		}
+		operation = mergeDraft(next.pending.action, operation, next.pending.field)
+	}
+
+	// Check source currency even when the model omits or mislabels it.
+	if operation.name == "create_expense" || operation.name == "update_expense" || operation.name == "clarify" {
+		if unsupportedCurrency(text) || (operation.value("currency") != "" && operation.value("currency") != "RUB") {
+			operation = currencyClarification(operation)
+		} else if next.pending != nil && next.pending.field == "currency" && !explicitRubles(text) {
+			return rejectStateTool(ctx, next, operation.name), nil
+		}
 	}
 	if operation.name == "clarify" {
-		questions := map[string]string{
-			"amount":   "Какую сумму записать?",
-			"category": "Уточните категорию траты.",
-			"spent_at": "Уточните дату траты.",
-			"target":   "Какую трату выбрать?",
-			"request":  "Уточните действие и данные траты.",
+		planned, dateReference, reply, err := orchestrator.clarify(ctx, operation, text, reference, next)
+		if err != nil {
+			return operationError(ctx, err)
 		}
-
-		question, ok := questions[operation.value("field")]
-		if !ok {
-			return invalidRequest, nil
+		if reply != "" {
+			return reply, nil
 		}
-
-		if next.pending != nil && next.pending.action.name == "" {
-			text = next.pending.text + "\n" + text
-			reference = next.pending.reference
-		}
-
-		if len(text) > 16384 {
-			next.pending = nil
-			return "Уточните запрос одним сообщением.", nil
-
-		}
-		next.pending = &pending{text: text, reference: reference}
-
-		return question, nil
+		operation, reference = planned, dateReference
 	}
-	if next.pending != nil && next.pending.action.name == "" && operation.name != "list_expenses" {
-		// A missing-field follow-up retains the original request's calendar reference.
+	if next.pending != nil && !next.pending.selecting() && operation.name != "list_expenses" && operation.name != "total_expenses" {
 		reference = next.pending.reference
 	}
+
 	switch operation.name {
 	case "create_expense":
+		operation = copyAction(operation)
+		if operation.value("category") == "" {
+			category := string(expense.CategoryOther)
+			operation.args["category"] = &category
+		}
+		if operation.value("spent_at") == "" {
+			date := "today"
+			operation.args["spent_at"] = &date
+		}
 		date, err := orchestrator.date(operation.value("spent_at"), reference)
 		if err != nil {
-			return invalidRequest, nil
+			return operationError(ctx, expense.ValidationError{"spent_at": "invalid"})
 		}
 		item, err := expense.NewService(repo).Create(ctx, expense.Input{
 			UserID:   strconv.FormatInt(owner, 10),
@@ -64,7 +112,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 			Comment:  operation.args["comment"],
 		})
 		if err != nil {
-			return operationError(err)
+			return operationError(ctx, err)
 		}
 		next.focus = &item
 		next.pending = nil
@@ -78,7 +126,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		if operation.name == "total_expenses" {
 			total, err := service.Total(ctx, owner, filter)
 			if err != nil {
-				return operationError(err)
+				return operationError(ctx, err)
 			}
 			next.pending = nil
 			return botresponse.Total(total, filter, operation.value("period")), nil
@@ -89,7 +137,7 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 		}
 		page, err := service.List(ctx, owner, filter, limit, offset)
 		if err != nil {
-			return operationError(err)
+			return operationError(ctx, err)
 		}
 		next.pending = nil
 		if len(page.Items) == 1 && page.Total == 1 {
@@ -175,7 +223,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 	}
 	if operation.name == "update_expense" {
 		if _, err := orchestrator.updateInput(operation, reference); err != nil {
-			return operationError(err)
+			return operationError(ctx, err)
 		}
 	}
 
@@ -183,7 +231,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 	if operation.args["previous_amount"] != nil {
 		value, err := expense.ParseAmount(operation.value("previous_amount"))
 		if err != nil {
-			return botresponse.InvalidAmount, nil
+			return operationError(ctx, expense.ValidationError{"amount": "invalid"})
 		}
 		previous = value
 	}
@@ -192,7 +240,7 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 	if err != nil {
 		next.focus = nil
 		next.pending = nil
-		return operationError(err)
+		return operationError(ctx, err)
 	}
 
 	if len(candidates) == 0 {
@@ -203,14 +251,18 @@ func (orchestrator *Orchestrator) modify(ctx context.Context, service *expense.O
 		return "Найдено слишком много трат. Уточните описание или укажите ID.", nil
 	}
 	if len(candidates) > 1 || (previous != 0 && candidates[0].Amount != previous) {
-		next.pending = &pending{
-			action:        operation,
-			candidates:    candidates,
-			text:          text,
-			reference:     reference,
-			confirmAmount: len(candidates) == 1,
+		field := "selection"
+		if len(candidates) == 1 {
+			field = "confirmation"
 		}
-		return botresponse.Selection(candidates, next.pending.confirmAmount), nil
+		next.pending = &pending{
+			field:      field,
+			action:     operation,
+			candidates: candidates,
+			text:       text,
+			reference:  reference,
+		}
+		return botresponse.Selection(candidates, next.pending.field == "confirmation"), nil
 	}
 	return orchestrator.applyModification(ctx, service, owner, operation, reference, candidates[0], next)
 }
@@ -246,10 +298,12 @@ func selectExpenses(ctx context.Context, service *expense.OwnerService, owner in
 	return []expense.Expense{item}, nil
 }
 
-func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.OwnerService, owner int64, operation action, next *state) (string, error) {
+func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.OwnerService, owner int64, operation action, text string, next *state) (string, error) {
+	if !next.pending.selecting() {
+		return rejectStateTool(ctx, next, "choose_expense"), nil
+	}
 	if operation.value("choice") == "cancel" {
-		next.pending = nil
-		return "Выбор отменён. Укажите нужное действие.", nil
+		return cancelPending(ctx, text, next), nil
 	}
 
 	choice, err := expense.ParseID(operation.value("choice"))
@@ -264,23 +318,23 @@ func (orchestrator *Orchestrator) choose(ctx context.Context, service *expense.O
 		next.pending = nil
 		next.focus = nil
 		if err != nil {
-			return operationError(err)
+			return operationError(ctx, err)
 		}
 		return staleSelection, nil
 	}
 
-	if previous := deferred.action.value("previous_amount"); previous != "" && !deferred.confirmAmount {
+	if previous := deferred.action.value("previous_amount"); previous != "" && deferred.field != "confirmation" {
 		amount, err := expense.ParseAmount(previous)
 		if err != nil {
-			return botresponse.InvalidAmount, nil
+			return operationError(ctx, expense.ValidationError{"amount": "invalid"})
 		}
 		if selected.Amount != amount {
 			next.pending = &pending{
-				action:        deferred.action,
-				candidates:    []expense.Expense{selected},
-				text:          deferred.text,
-				reference:     deferred.reference,
-				confirmAmount: true,
+				field:      "confirmation",
+				action:     deferred.action,
+				candidates: []expense.Expense{selected},
+				text:       deferred.text,
+				reference:  deferred.reference,
 			}
 			return botresponse.Selection(next.pending.candidates, true), nil
 		}
@@ -295,7 +349,7 @@ func (orchestrator *Orchestrator) applyModification(ctx context.Context, service
 	if operation.name == "delete_expense" {
 		if err := service.Delete(ctx, owner, selected.ID, selected.UpdatedAt); err != nil {
 			next.focus = nil
-			return operationError(err)
+			return operationError(ctx, err)
 		}
 		if next.focus != nil && next.focus.ID == selected.ID {
 			next.focus = nil
@@ -309,7 +363,7 @@ func (orchestrator *Orchestrator) applyModification(ctx context.Context, service
 	item, err := service.Update(ctx, owner, selected.ID, selected.UpdatedAt, input)
 	if err != nil {
 		next.focus = nil
-		return operationError(err)
+		return operationError(ctx, err)
 	}
 	next.focus = &item
 	return botresponse.Updated(selected, item), nil

@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sort"
 
+	"github.com/Venamuss/FinBot/internal/expense"
 	"github.com/Venamuss/FinBot/internal/llm"
 )
 
@@ -22,9 +23,9 @@ type toolSpec struct {
 
 var toolSpecs = map[string]toolSpec{
 	"create_expense": {
-		description: "Create one expense. Infer category; use today when date is omitted. Ask for missing amount.",
-		fields:      []string{"amount", "category", "spent_at", "comment"},
-		required:    []string{"amount", "category", "spent_at"},
+		description: "Create one expense from a clear description and amount, including <description> <amount> without a currency marker. Extract amount independently of category; use другое if uncertain. Preserve description in comment; use today if no date. Clarify only missing/ambiguous amounts or unsupported currency. RUB only; never convert.",
+		fields:      []string{"amount", "category", "spent_at", "comment", "currency", "request_context"},
+		required:    []string{"amount", "spent_at"},
 	},
 	"list_expenses": {
 		description: `List own expenses: "мои траты", "мои расходы", "траты", "покажи расходы". No period requested means ALL dates; set dates and period to null. Independent requests never inherit previous filters. Reuse previous_listing only for explicit follow-ups. One call covers all categories. Set unrequested arguments to null. Use period OR date_from/date_to, never both. за неделю = last_seven_days; на этой неделе = this_week; за месяц = this_month. "последние 5 трат" = limit "5", no dates.`,
@@ -37,22 +38,30 @@ var toolSpecs = map[string]toolSpec{
 		strict:      true,
 	},
 	"update_expense": {
-		description: "Update one expense. Omit id/query for last or focused expense. Include previous_amount when stated. query searches the comment.",
-		fields:      []string{"id", "query", "previous_amount", "amount", "category", "spent_at", "comment"},
+		description: "Update one expense. Omit id/query for last or focused expense. Include previous_amount when stated. query searches the comment. RUB only; clarify explicit unsupported currency before updating.",
+		fields:      []string{"id", "query", "previous_amount", "amount", "category", "spent_at", "comment", "currency", "request_context"},
 	},
 	"delete_expense": {
 		description: "Delete one expense. Use query for a description such as такси, id for an explicit ID, or neither for last/focused expense.",
-		fields:      []string{"id", "query"},
+		fields:      []string{"id", "query", "request_context"},
 	},
 	"choose_expense": {
-		description: "Resolve a pending selection using its 1-based choice number, only when the user chooses or explicitly confirms it. Use cancel when the user cancels the pending action.",
+		description: "Resolve an active expense selection/confirmation only. choice is its 1-based displayed position, never an expense ID, amount or category. Use cancel only for explicit cancellation of that selection.",
 		fields:      []string{"choice"},
 		required:    []string{"choice"},
 	},
 	"clarify": {
-		description: "Ask for missing information; never claim an operation succeeded.",
-		fields:      []string{"field"},
+		description: "Ask only for missing or genuinely ambiguous information. Use amount for missing/ambiguous amounts, currency for explicit unsupported currencies. An unfamiliar description is not a reason to ask for an amount or category; use category другое. Never claim an operation succeeded.",
+		fields:      []string{"field", "request_context", "intent", "amount", "category", "spent_at", "comment", "currency", "id", "query", "previous_amount"},
 		required:    []string{"field"},
+	},
+	"answer_clarification": {
+		description: "Answer the current pending_field only, using a canonical value. Never select an expense or change unrelated fields. For currency use value RUB only for an explicit RUB correction; amount may optionally correct its numeric value. A bare number or yes does not answer a currency question.",
+		fields:      []string{"value", "amount"},
+		required:    []string{"value"},
+	},
+	"cancel_request": {
+		description: "Cancel an active pending clarification or selection only when the user explicitly asks to cancel. Never use for a number, category or an unfamiliar description.",
 	},
 }
 
@@ -80,16 +89,39 @@ func toolsForModel() []llm.Tool {
 				property["type"] = []string{"string", "null"}
 			}
 			switch field {
+			case "intent":
+				property["enum"] = []string{"create_expense", "update_expense"}
+				property["description"] = "Operation being clarified. Include all already known valid values in the other arguments. For creation, category is inferred or defaults to другое; never ask for a creation category."
+			case "value":
+				property["description"] = "Canonical answer to pending_field: decimal amount, category, date (YYYY-MM-DD/today/yesterday), or RUB for an explicit currency correction."
 			case "id":
 				property["pattern"] = "^[1-9][0-9]*$"
 			case "amount", "previous_amount":
-				property["pattern"] = `^(0|[1-9][0-9]*)(\.[0-9]{1,2})?$`
+				property["pattern"] = `^(0|[1-9][0-9]{0,11})(\.[0-9]{1,2})?$`
+				property["description"] = "Exact positive RUB decimal string, 0.01..999999999999.99. Normalize a user comma separator to a period. No currency symbols, grouping, rounding or exponent notation."
+			case "currency":
+				property["enum"] = []string{"RUB"}
+				property["description"] = "Supported currency code, always RUB. An absent currency defaults to RUB; never clarify merely because no marker was given. For an explicit unsupported code, name or symbol, use clarify(field=currency)."
+			case "request_context":
+				property["enum"] = []string{"new", "followup"}
+				property["description"] = "Use new for an independent request, discarding pending data. Use followup only to answer pending_request. Creation defaults to new when omitted. Prefer answer_clarification for a pending field; new expenses without currency markers use RUB."
 			case "choice":
 				property["pattern"] = "^(cancel|[1-9][0-9]*)$"
 			case "field":
-				property["enum"] = []string{"amount", "category", "spent_at", "target", "request"}
+				property["enum"] = []string{"amount", "currency", "category", "spent_at", "target", "request"}
 			case "category":
-				property["enum"] = []string{"еда", "транспорт", "жильё", "развлечения", "здоровье", "покупки", "другое"}
+				property["enum"] = []string{
+					string(expense.CategoryFood),
+					string(expense.CategoryTransport),
+					string(expense.CategoryHousing),
+					string(expense.CategoryEntertainment),
+					string(expense.CategoryHealth),
+					string(expense.CategoryShopping),
+					string(expense.CategoryOther),
+				}
+				if name == "create_expense" {
+					property["description"] = "Infer independently of amount. Use другое if the expense description is unfamiliar; do not ask for a category."
+				}
 				if spec.strict {
 					property["description"] = "Null unless the user requests a particular category. Null includes all categories."
 				}
@@ -203,6 +235,15 @@ func parseAction(response llm.Response) (action, error) {
 		}
 	}
 	if args["id"] != nil && args["query"] != nil {
+		return action{}, errArguments
+	}
+	if value := args["request_context"]; value != nil && *value != "new" && *value != "followup" {
+		return action{}, errArguments
+	}
+	if value := args["intent"]; value != nil && *value != "create_expense" && *value != "update_expense" {
+		return action{}, errArguments
+	}
+	if value := args["field"]; value != nil && !contains([]string{"amount", "currency", "category", "spent_at", "target", "request"}, *value) {
 		return action{}, errArguments
 	}
 	return action{name: call.Name, args: args}, nil

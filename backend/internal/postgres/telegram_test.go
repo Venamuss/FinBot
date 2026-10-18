@@ -395,3 +395,109 @@ func TestTelegramTransactionDeadlineIntegration(t *testing.T) {
 	}
 	assertCounts(t, pool, 0, 0)
 }
+
+func TestAmountCurrencyClarificationAndReplayIntegration(t *testing.T) {
+	pool := testPool(t)
+	model := &integrationModel{
+		pool: pool, name: "create_expense",
+		args: `{"amount":"1233121.50","category":"другое","spent_at":"today","comment":"неведомая покупка"}`,
+	}
+	orchestrator := conversation.New(model, NewTelegramStore(pool), map[int64]bool{101: true, 202: true}, time.UTC)
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	reply, err := orchestrator.Handle(ctx, 1, 101, "неведомая покупка 1233121,50$", reference)
+	if err != nil || !strings.Contains(reply, "рублях") {
+		t.Fatalf("currency clarification failed: %v", err)
+	}
+	assertCounts(t, pool, 0, 1)
+	model.args = `{"amount":"1233121.50","category":"другое","spent_at":"today","comment":"неведомая покупка","request_context":"followup"}`
+	reply, err = orchestrator.Handle(ctx, 2, 101, "1233121,50 руб", reference)
+	if err != nil || !strings.Contains(reply, "1 233 121,50 ₽") {
+		t.Fatalf("corrected amount failed: %v", err)
+	}
+	assertCounts(t, pool, 1, 2)
+	calls := model.calls
+	replayed, err := orchestrator.Handle(ctx, 2, 101, "1233121,50 руб", reference)
+	if err != nil || replayed != reply || model.calls != calls {
+		t.Fatal("duplicate update did not replay the committed reply")
+	}
+	assertCounts(t, pool, 1, 2)
+	item, err := expense.NewOwnerService(New(pool)).Latest(ctx, 101)
+	if err != nil || item.Amount.String() != "1233121.50" || item.Category != expense.CategoryOther || item.Comment == nil || *item.Comment != "неведомая покупка" {
+		t.Fatal("exact amount, fallback category or description lost")
+	}
+	denied, err := orchestrator.Handle(ctx, 2, 303, "синтетический запрос", reference)
+	if err != nil || denied != conversation.Denied || model.calls != calls {
+		t.Fatal("denied user could replay an expense reply")
+	}
+
+	model.args = `{"amount":"123","category":"покупки","spent_at":"today"}`
+	if _, err := orchestrator.Handle(ctx, 3, 101, "магазин 123$", reference); err != nil {
+		t.Fatal(err)
+	}
+	assertCounts(t, pool, 1, 3)
+	model.args = `{"amount":"50","category":"еда","spent_at":"today","comment":"еда"}`
+	for index, owner := range []int64{101, 202} {
+		updateID := int64(index + 4)
+		reply, err := orchestrator.Handle(ctx, updateID, owner, "еда 50", reference.Add(24*time.Hour))
+		if err != nil || !strings.Contains(reply, "50 ₽") {
+			t.Fatal("independent default-RUB creation failed after currency error")
+		}
+		item, err := expense.NewOwnerService(New(pool)).Latest(ctx, owner)
+		if err != nil || item.Amount.String() != "50.00" || item.SpentAt != "2026-10-19" || item.Comment == nil || *item.Comment != "еда" {
+			t.Fatal("independent expense inherited rejected-request data")
+		}
+		calls := model.calls
+		replayed, err := orchestrator.Handle(ctx, updateID, owner, "еда 50", reference.Add(24*time.Hour))
+		if err != nil || replayed != reply || model.calls != calls {
+			t.Fatal("independent expense replay repeated model execution")
+		}
+	}
+	assertCounts(t, pool, 3, 5)
+}
+
+func TestFieldClarificationRoutingIntegration(t *testing.T) {
+	pool := testPool(t)
+	model := &integrationModel{pool: pool}
+	orchestrator := conversation.New(model, NewTelegramStore(pool), map[int64]bool{101: true, 202: true}, time.UTC)
+	ctx := context.Background()
+	reference := time.Date(2026, 10, 18, 12, 0, 0, 0, time.UTC)
+	steps := []struct {
+		owner            int64
+		text, tool, args string
+		expenses         int
+	}{
+		{101, "магазин 123$", "create_expense", `{"amount":"123","category":"покупки","spent_at":"today","comment":"магазин"}`, 0},
+		{101, "13", "choose_expense", `{"choice":"cancel"}`, 0},
+		{101, "123р", "answer_clarification", `{"value":"RUB","amount":"123"}`, 1},
+		{101, "измени категорию", "clarify", `{"field":"category","intent":"update_expense","id":"1"}`, 1},
+		{202, "другое", "answer_clarification", `{"value":"другое"}`, 1},
+		{101, "другое", "answer_clarification", `{"value":"другое"}`, 1},
+		{101, "кофе", "clarify", `{"field":"amount","intent":"create_expense","category":"еда","spent_at":"today","comment":"кофе"}`, 1},
+		{101, "350,25", "answer_clarification", `{"value":"350.25"}`, 2},
+	}
+	var lastReply string
+	for index, step := range steps {
+		model.name, model.args = step.tool, step.args
+		reply, err := orchestrator.Handle(ctx, int64(index+1), step.owner, step.text, reference)
+		if err != nil {
+			t.Fatal(err)
+		}
+		lastReply = reply
+		assertCounts(t, pool, step.expenses, index+1)
+	}
+	first, err := expense.NewOwnerService(New(pool)).GetByID(ctx, 101, 1)
+	if err != nil || first.Category != expense.CategoryOther || first.Amount.String() != "123.00" || first.Comment == nil || *first.Comment != "магазин" {
+		t.Fatal("currency/category replies lost valid draft values")
+	}
+	calls := model.calls
+	replayed, err := orchestrator.Handle(ctx, 8, 101, "350,25", reference)
+	if err != nil || replayed != lastReply || model.calls != calls {
+		t.Fatal("clarification replay repeated model execution")
+	}
+	assertCounts(t, pool, 2, 8)
+	denied, err := orchestrator.Handle(ctx, 8, 303, "350,25", reference)
+	if err != nil || denied != conversation.Denied || model.calls != calls {
+		t.Fatal("denied user accessed another user's clarification result")
+	}
+}

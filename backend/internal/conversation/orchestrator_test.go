@@ -414,7 +414,7 @@ func TestMissingFieldFollowupKeepsOriginalDate(t *testing.T) {
 	if _, err := orchestrator.Handle(context.Background(), 1, 101, "кофе вчера", original); err != nil {
 		t.Fatal(err)
 	}
-	model.response = tool("create_expense", `{"amount":"350","category":"еда","spent_at":"yesterday","comment":"кофе"}`)
+	model.response = tool("create_expense", `{"amount":"350","category":"еда","spent_at":"yesterday","comment":"кофе","request_context":"followup"}`)
 	if _, err := orchestrator.Handle(context.Background(), 2, 101, "350", original.Add(2*time.Hour)); err != nil {
 		t.Fatal(err)
 	}

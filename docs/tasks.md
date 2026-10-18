@@ -516,6 +516,93 @@ Verification actually executed:
 
 **Limitations and remaining checks:** logical lines may wrap on narrow Telegram clients. Only text too large for a message is explicitly shortened; full expense text remains available in the panel. Previously stored replies replay their original formatting to preserve idempotency. No live Telegram visual check or paid LLM request was performed; automated LLM/Telegram interactions used local mocks. Existing manual MVP acceptance and optional local-model check T13 remain separate and unchanged. No subsequent stages were implemented.
 
+## Natural-Language Amount Recognition Fix — 18.10.2026
+
+Scope: improve short expense interpretation and RUB safety while retaining LLM tool calling, the configured model/provider, exact domain money, ownership, transaction/replay guarantees and the existing REST/database contracts. No dependencies or Git commits were added.
+
+Investigation before production changes:
+
+- Read AGENTS.md, assignment/project requirements, architecture, API, README, system prompt/tool schemas, adapter, orchestration/clarification and expense service/amount validation.
+- `TestAmountRecognitionInvestigation` reproduced the reported amount question only when the mocked model selected `clarify(field=amount)`. Supplying valid creation arguments for the same unfamiliar description and large amount succeeded. The adapter preserves argument strings; schemas do not classify descriptions, and the existing positive 0.01..999999999999.99 domain range accepts the reported values. A malformed/missing creation amount produces a validation reply, not that question. Existing missing-field context retains the original request/date.
+- Confirmed an underspecified model boundary: no creation examples, explicit description-plus-number rule, category-independent extraction/fallback instruction, or currency safety rule. The observed question establishes the selected clarification path; the original provider response and its internal reason were not captured, so unfamiliar-word classification versus extraction omission cannot be distinguished. No private inputs/prompts were logged and no live paid request was made.
+- Added a failing regression proving a mocked creation with omitted currency could turn the synthetic `магазин 123$` into RUB. The model tool and Go execution previously discarded currency information; storage has no currency field and Telegram displays ₽.
+
+Changes:
+
+- `backend/internal/conversation/orchestrator.go`: concise creation guidance with short/unfamiliar/large examples, comma-to-period decimal normalization, independent category inference with `другое`, original comments, quantity/date/ID exclusions, ambiguous/missing amount questions and RUB-only handling. Exposes the pending clarification field to the model.
+- `backend/internal/conversation/tools.go`: matching tool/property descriptions, domain-aligned 12-digit whole-part schema, optional `currency` constrained to `RUB`, and `clarify(field=currency)`. Existing exact money validation is unchanged; malformed values are not repaired.
+- `backend/internal/conversation/{currency,execute}.go`: validate original text for non-RUB currency symbols/common codes/names independently of the model's currency argument, and reject unsupported tool currency before creating/updating. Persist a currency question with the original request/calendar context; require an explicit RUB correction before resuming, including across repeated unanswered questions. No amount/intent command parser was added.
+- `backend/internal/conversation/amount_test.go` and `backend/internal/postgres/telegram_test.go`: mocked short/unknown/large amounts, both decimal separators, fallback category/comment retention, missing/ambiguous amounts, quantities/dates/IDs, malformed tool arguments, foreign currency source/tool guards, clarification follow-ups, exact database storage and duplicate-update replay. `docs/requirements.md` P07 now explicitly documents the bot's RUB default and foreign-currency clarification.
+
+Verification actually executed:
+
+| Check | Result |
+|---|---|
+| Investigation | Focused baseline test accepted large unfamiliar-description creation; currency regression failed before the production fix and passed afterward |
+| Focused Go | Amount, clarification, schema, malformed-argument and currency regression tests passed; final `go test -race ./internal/conversation -count=1 -timeout=90s` passed after prompt/schema review |
+| Full Go/PostgreSQL | `go test -race ./... -count=1 -timeout=180s` passed against isolated PostgreSQL 17 on loopback 18646; real integration tests ran, including allowed A/B, denied C, SQL ownership, transactional replay and the new exact-amount/currency follow-up scenario |
+| Static/format | `gofmt`, `go vet ./...`, complete diff/readability/boundary/transaction review and `git diff --check` passed |
+| Frontend | `npm test`: 55 tests in four files passed; `npm run build` passed, including TypeScript checking |
+| Compose | Isolated `finbot-amount-check` images/volume, loopback HTTP 18645/database 18646: `up -d --build --wait` passed with all services healthy; `scripts/smoke.py` passed CRUD, member names/ownership, updates/reassignment, filters, sorting, pagination and errors. Bot/key empty, LLM unreachable; existing development stack preserved |
+
+Initial sandbox-wide Go tests could not open local mock listeners, and Docker access was restricted; authorized host-access runs above passed. The dedicated QA stack/volume is removed after verification.
+
+Mandatory automated checks are complete for this fix. Optional live GPT-4.1 Mini/OpenRouter verification was not performed; no model/provider configuration was changed. Mocked responses verify prompt/schema contracts and downstream behavior, not live extraction accuracy. Semantic amount ambiguity and rare currency names/codes still rely on the LLM; source guards cover currency symbols and common explicit codes/names. Currency clarification intentionally requires an explicit RUB correction (for example `123 руб`), rather than accepting a bare number or yes. Conversation context retains the existing 30-minute/in-memory lifetime. No conversion or multi-currency storage was introduced.
+
+## Currency Validation State Regression Fix — 18.10.2026
+
+Confirmed root cause: the previous fix applied `pending.field == currency && !explicitRubles(text)` to every later create/update/clarification, without distinguishing an independent request from an answer to the currency question. Thus an earlier unsupported-currency request caused ordinary `магазин 123`, `магазин 120` and `еда 50` to be rejected. The prompt reinforced the unconditional explicit-RUB requirement. Source currency detection, exact amount parsing and the optional `currency` schema did not reject an absent marker in a fresh conversation. Focused mocked tests reproduced seven marker-free/decimal/large independent requests failing before this correction; explicit RUB cases already passed.
+
+Changes in this follow-up (previous uncommitted amount-fix changes are retained):
+
+- `backend/internal/conversation/execute.go`: discard missing-field clarification state for an explicitly new request; creation after a currency question also defaults to independent when no context argument is supplied. New requests use their own calendar reference and default RUB. Genuine follow-ups retain the original context and currency ambiguity checks. Pending expense selections cannot be discarded through this argument.
+- `backend/internal/conversation/{orchestrator,tools}.go`: align prompt and schema descriptions on absent currency = RUB, independent requests versus follow-ups, and explicit foreign currencies. Optional `request_context` is `new` or `followup`; server parsing rejects other strings, nulls and non-string values before changing state. Intent remains LLM-based; no amount/description command parser was added.
+- `backend/internal/conversation/amount_test.go`: independent creations after foreign-currency errors, omitted and explicit RUB tool currency, RUB markers including `р`, `₽`, `руб.` and `рублей`, comma/period decimals, large/unfamiliar descriptions, original-versus-current calendar references, amount/currency clarification recovery, invalid context arguments and duplicate replay. Existing foreign-currency follow-up tests now identify genuine follow-ups explicitly.
+- `backend/internal/postgres/telegram_test.go`: actual database creation for allowed A/B following A's currency error, default RUB precision, current request date/description, stored response replay, and denied C. This task record is the only documentation changed in this follow-up.
+
+Verification actually executed:
+
+| Check | Result |
+|---|---|
+| Focused regressions | Failed on the previous implementation; passed after the fix, alongside existing explicit-RUB/foreign-currency tests |
+| Full Go/PostgreSQL | `go test -race ./... -count=1 -timeout=180s` passed against isolated PostgreSQL 17 on loopback 18656; no integration tests skipped. Includes allowed A/B, denied C, ownership, amount limits/precision, stale selections, transactions and duplicate processing |
+| Static/review | `gofmt`, `go vet ./...` and `git diff --check` passed; reviewed the complete diff and the incremental diff against the start of this follow-up for readability, boundary, ownership and transaction safety |
+| Frontend | `npm test`: 55 tests in four files passed; `npm run build` passed, including TypeScript checking |
+| Compose | Separate `finbot-currency-regression` images/volume, HTTP loopback 18655 and database 18656: `up -d --build --wait` and `scripts/smoke.py` passed. Telegram token/key empty and LLM unreachable. Only this task's disposable QA stack/volume is removed after checks; development services are preserved |
+
+Mandatory automated checks are complete for this fix. No paid/live model request or Git commit was made; optional live provider verification was not run. Distinguishing natural-language independent requests from follow-ups remains the model's responsibility; server checks validate the context enum, source/tool currency, exact amount and ownership. The earlier explicit-RUB correction rule applies to genuine currency follow-ups, not subsequent independent expenses. No provider/model, domain amount parser, database schema, REST contract, dependencies or Telegram formatting changed.
+
+## Conversation State and Clarification Routing Fix — 18.10.2026
+
+Audit covered AGENTS.md, assignment/project requirements, architecture/API, `.env.example`, Telegram orchestration/dispatch, tool schemas and prompts, category/amount validation, pending state, expiry, authorization and replay behavior. Existing provider/model and transport formatting were preserved.
+
+Confirmed application defects and reproduced transitions:
+
+- `choose_expense(choice=cancel)` unconditionally cleared pending state without an expense selection or an actual cancellation message. A mocked `13` reply after a currency error reproduced that false cancellation before production changes. Selection tools were always advertised, and even field clarifications included an empty `choices` list.
+- Clarifications stored raw text/reference but no validated operation/draft. A new `clarify(field=...)` could replace the expected field without resolving it. This permitted currency/amount/category questions to route into record selection and discarded already extracted values. The initial failing regression for an unfamiliar description plus a known amount also reproduced the absence of a server category fallback.
+- Creation required category in the tool schema and had no Go fallback, despite prompt instructions. The category enum and `expense.ParseCategory` already agreed on all seven canonical values, including `другое`; no enum mismatch or cross-user map leak was found. Existing authorization, lock, SQL ownership and 30-minute expiration worked and remain in place. The original live provider responses were not captured, so the provider's exact internal reason for choosing a wrong tool cannot be established from the user-visible replies alone.
+
+Chosen behavior and changes:
+
+- Added `backend/internal/conversation/state.go`: explicit idle/awaiting-field/selection/confirmation types, state-specific tools, validated draft retention/merging, expected-field answers, cancellation validation, and wrong-state rejection. Known values are copied before changing a draft. An amount reply cannot become a record ID; a category answer cannot introduce a different update target or unrelated changes. A small explicit cancellation-phrase check addresses the confirmed numeric-cancellation bug; no amount or expense command parser was added.
+- Updated `conversation/{execute,orchestrator,currency,tools}.go`: explicit currency-correction drafts; `answer_clarification` and `cancel_request`; `clarify` retains intent and known fields; only active selections expose `choose_expense` and `choices`. New creations default to independent; explicit `request_context=new` supersedes other pending requests. Genuine follow-ups retain the original calendar reference and data. Creation category is optional in the bot schema and defaults to `другое` in Go; schemas use domain category constants. A spurious creation-category clarification with a known amount creates using the inferred/fallback category, or asks for a genuinely missing amount. Category questions remain valid for explicit category changes lacking the desired category. Selection and previous-amount confirmation use one field discriminator instead of a separate confirmation boolean.
+- Added safe diagnostics for loaded/committed state, transitions, clarification type, allowlisted tool, validation category, reset and expiration. Committed transitions/reset events occur after transaction success; diagnostics never contain messages, prompts, arguments, expense IDs, amounts, comments or credentials.
+- Added `conversation/state_test.go` (11 sequential/regression tests) and `conversation/diagnostics_test.go` (privacy and state/schema contract tests). Updated `conversation/orchestrator_test.go` to mark a genuine legacy creation follow-up explicitly. Extended `postgres/telegram_test.go` with an actual database sequence for currency correction, category change, amount reply, A/B isolation, C denial and replay. Documented behavior in `docs/architecture.md` and this record. Previous uncommitted amount/currency work is retained.
+
+Verification actually executed:
+
+| Check | Result |
+|---|---|
+| Investigation | Wrong selection cancellation and absent server fallback tests failed before the production changes and passed after them |
+| Sequential regressions | Reported sequence with deliberately wrong mocked tools, amount then numeric reply, real category-change question then `другое`, new creation during amount clarification/selection, invalid answers retaining valid drafts, explicit cancellation, expiry, independent failure, currency recovery, update-target protection and duplicate replay passed |
+| Diagnostics | JSON logs were captured at DEBUG and checked for state/tool/clarification/validation/reset/expiration metadata and absence of synthetic private text/arguments/financial values. Tool availability and canonical category/domain agreement passed |
+| Full Go/PostgreSQL | `go test -race ./... -count=1 -timeout=180s` passed using isolated PostgreSQL 17 on loopback 18666, including real transaction/integration tests with no database-test skips and mandatory allowed A/B / denied C |
+| Static/review | `gofmt`, `go vet ./...`, full and incremental diff review, readability/boundary/error/ownership/transaction review, and `git diff --check` passed |
+| Frontend | `npm test`: 55 tests in four files passed. `npm run build` passed, including TypeScript checking |
+| Compose | Isolated `finbot-state-check` images/volume, loopback HTTP 18665/database 18666: final `up -d --build --wait` and `scripts/smoke.py` passed. Bot/key empty and LLM unreachable; only the disposable QA stack/volume is removed afterward, preserving development services |
+
+Mandatory automated verification is complete for this fix. Optional live GPT-4.1 Mini/OpenRouter verification was not run and no paid requests or Git commits were made. Intent/extraction and independent-versus-follow-up classification remain LLM responsibilities; Go validates and constrains the resulting state transitions. A draft can retain only values actually supplied by the model; omitted information is requested rather than invented. Cancellation accepts the explicit phrases implemented in `explicitCancellation`; other wording requires clarification. Context remains in memory, expires after 30 minutes and is lost on restart. No REST/database schema, dependency, provider/model or unrelated formatting changes were made, and no later stage was implemented.
+
 ## Mandatory MVP
 
 Maintenance check, 16.10.2026: centralized all expense model/service errors in a single `var` block in `model.go`, including `ErrNotFound` and validation messages. Existing messages and REST behavior are preserved. `gofmt`, `go test ./...`, and `go vet ./...` passed; PostgreSQL integration tests were skipped without `TEST_DATABASE_URL`. Compose smoke was not rerun for this declaration-only refactoring.
