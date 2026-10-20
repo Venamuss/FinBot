@@ -65,10 +65,8 @@ func (store *memoryStore) Execute(ctx context.Context, id, owner int64, execute 
 type memoryRepository struct {
 	expense.Repository
 	expense.OwnerRepository
-	items      map[int64]expense.Expense
-	sequence   int64
-	listCalls  int
-	totalCalls int
+	items    map[int64]expense.Expense
+	sequence int64
 }
 
 func (repo *memoryRepository) Create(_ context.Context, item expense.Expense) (expense.Expense, error) {
@@ -99,7 +97,6 @@ func (repo *memoryRepository) LatestOwned(ctx context.Context, owner int64) (exp
 }
 
 func (repo *memoryRepository) ListOwned(_ context.Context, owner int64, filter expense.OwnerFilter, limit, offset int) (expense.Page, error) {
-	repo.listCalls++
 	items := []expense.Expense{}
 	for _, item := range repo.items {
 		if item.UserID != owner || (filter.Category != "" && item.Category != filter.Category) || (filter.DateFrom != "" && item.SpentAt < filter.DateFrom) || (filter.DateTo != "" && item.SpentAt > filter.DateTo) {
@@ -128,7 +125,6 @@ func (repo *memoryRepository) ListOwned(_ context.Context, owner int64, filter e
 }
 
 func (repo *memoryRepository) TotalOwned(ctx context.Context, owner int64, filter expense.OwnerFilter) (string, error) {
-	repo.totalCalls++
 	page, err := repo.ListOwned(ctx, owner, filter, 100, 0)
 	var total expense.Amount
 	for _, item := range page.Items {

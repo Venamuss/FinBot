@@ -39,10 +39,6 @@ type toolSpec struct {
 }
 
 var toolSpecs = map[string]toolSpec{
-	"unknown_intent": {
-		description: "No supported intent can reasonably be inferred: meaningless input, unsupported questions or unclear replies. Do not read or change expenses; keep pending work. Prefer this over guessing an expense tool.",
-		strict:      true,
-	},
 	"create_expense": {
 		description: "Create one expense from a clear description and amount, including <description> <amount> without a currency marker. Extract amount independently of category; use другое if uncertain. Put only the description in comment, excluding the extracted price and currency; preserve model numbers and quantities. Include amount_text as the exact source price expression (including за and currency when present). Use today if no date. Clarify only missing/ambiguous amounts or unsupported currency. RUB only; never convert.",
 		fields:      []string{"amount", "amount_text", "category", "spent_at", "comment", "currency", "request_context"},

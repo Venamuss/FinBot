@@ -173,12 +173,12 @@ func TestListingOptionalDateAndFilters(t *testing.T) {
 		{name: "spending", text: "траты", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
 		{name: "show expenses", text: "покажи расходы", tool: "list_expenses", args: `{}`, want: "🧾 Мои расходы\n3 записи · За всё время"},
 		{name: "all today", text: "покажи все расходы за сегодня", tool: "list_expenses", args: `{"period":"today","date_from":null,"date_to":null,"category":null,"query":null}`, want: "🧾 Мои расходы\n2 записи · За сегодня · 17 октября 2026"},
-		{name: "explicit date", text: "покажи расходы за 2026-10-16", tool: "list_expenses", args: `{"period":null,"date_from":"2026-10-16","date_to":"2026-10-16","category":null,"query":null}`, want: "🧾 Мои расходы\n1 запись · 16 октября 2026"},
-		{name: "relative yesterday", text: "покажи расходы за вчера", tool: "list_expenses", args: `{"period":"yesterday"}`, want: "🧾 Мои расходы\n1 запись · За вчера · 16 октября 2026"},
-		{name: "category", text: "покажи расходы на транспорт", tool: "list_expenses", args: `{"category":"транспорт"}`, want: "🧾 Мои расходы\n1 запись · За всё время · 🚕 Транспорт"},
-		{name: "literal comment", text: "покажи кофе", tool: "list_expenses", args: `{"query":"кофе"}`, want: "🧾 Мои расходы\n1 запись · За всё время · «кофе»"},
-		{name: "empty result", text: "покажи расходы на жильё", tool: "list_expenses", args: `{"category":"жильё"}`, want: "🧾 Мои расходы\n0 записей · За всё время · 🏠 Жильё\nРасходы не найдены."},
-		{name: "total today", text: "сколько потратил сегодня", tool: "total_expenses", args: `{}`, want: "📊 Всего: 550 ₽\n17 октября 2026"},
+		{name: "explicit date", tool: "list_expenses", args: `{"period":null,"date_from":"2026-10-16","date_to":"2026-10-16","category":null,"query":null}`, want: "🧾 Мои расходы\n1 запись · 16 октября 2026"},
+		{name: "relative yesterday", tool: "list_expenses", args: `{"period":"yesterday"}`, want: "🧾 Мои расходы\n1 запись · За вчера · 16 октября 2026"},
+		{name: "category", tool: "list_expenses", args: `{"category":"транспорт"}`, want: "🧾 Мои расходы\n1 запись · За всё время · 🚕 Транспорт"},
+		{name: "literal comment", tool: "list_expenses", args: `{"query":"кофе"}`, want: "🧾 Мои расходы\n1 запись · За всё время · «кофе»"},
+		{name: "empty result", tool: "list_expenses", args: `{"category":"жильё"}`, want: "🧾 Мои расходы\n0 записей · За всё время · 🏠 Жильё\nРасходы не найдены."},
+		{name: "total today", tool: "total_expenses", args: `{}`, want: "📊 Всего: 550 ₽\n17 октября 2026"},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
@@ -223,7 +223,7 @@ func TestListingArgumentErrors(t *testing.T) {
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			orchestrator, model, store := setup(t)
-			reply := handle(t, orchestrator, model, 1, 101, "покажи расходы", "list_expenses", test.args)
+			reply := handle(t, orchestrator, model, 1, 101, "synthetic", "list_expenses", test.args)
 			if reply != test.want || len(store.repo.items) != 0 || storedReply(store.results[1]) != reply {
 				t.Fatalf("reply=%s", reply)
 			}
@@ -235,14 +235,11 @@ func TestListingThroughAdapterAndSafeFailures(t *testing.T) {
 	const call = `{"id":"1","type":"function","function":{"name":"list_expenses","arguments":"{}"}}`
 	cases := []struct {
 		name   string
-		text   string
 		calls  string
 		finish string
 		want   string
 	}{
 		{name: "valid list", calls: call, finish: "tool_calls", want: "🧾 Мои расходы\n0 записей · За всё время\nРасходы не найдены. Попробуйте другой период или добавьте расход."},
-		{name: "nonsense misclassified as list", text: "ыфваываы", calls: call, finish: "tool_calls", want: unknownIntentReply},
-		{name: "explicit unknown intent", text: "asdfghjkl", calls: strings.Replace(call, "list_expenses", "unknown_intent", 1), finish: "tool_calls", want: unknownIntentReply},
 		{name: "zero calls", finish: "stop", want: invalidModelResponse},
 		{name: "multiple calls", calls: call + "," + strings.Replace(call, `"id":"1"`, `"id":"2"`, 1), finish: "tool_calls", want: invalidModelResponse},
 		{name: "malformed arguments", calls: strings.Replace(call, `"arguments":"{}"`, `"arguments":"{private-argument"`, 1), finish: "tool_calls", want: invalidModelResponse},
@@ -280,21 +277,14 @@ func TestListingThroughAdapterAndSafeFailures(t *testing.T) {
 			}
 			orchestrator, _, store := setup(t)
 			orchestrator.model = client
-			text := test.text
-			if text == "" {
-				text = "покажи расходы private-message"
-			}
 			for attempt := 0; attempt < 2; attempt++ {
-				reply, err := orchestrator.Handle(context.Background(), 1, 101, text, time.Now())
+				reply, err := orchestrator.Handle(context.Background(), 1, 101, "private-message", time.Now())
 				if err != nil || plainReply(reply) != test.want {
 					t.Fatalf("unexpected safe reply: %s, error=%v", reply, err)
 				}
 			}
 			if requests != 1 || len(store.results) != 1 || len(store.repo.items) != 0 {
 				t.Fatal("failed or replayed request executed again")
-			}
-			if test.want == unknownIntentReply && store.repo.listCalls != 0 {
-				t.Fatal("rejected intent still queried expenses")
 			}
 			if strings.Contains(logs.String(), "private-") {
 				t.Fatal("diagnostics leaked model arguments, names, or message contents")

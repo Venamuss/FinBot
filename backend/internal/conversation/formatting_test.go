@@ -52,11 +52,11 @@ func TestHTMLPaginationAdvancesByShownRows(t *testing.T) {
 	offset := 0
 	update := int64(1)
 	for ; offset < 20; update++ {
-		name, args, request := "navigate_expenses", `{"direction":"next"}`, "ещё"
+		name, args := "navigate_expenses", `{"direction":"next"}`
 		if update == 1 {
-			name, args, request = "list_expenses", `{}`, "мои расходы"
+			name, args = "list_expenses", `{}`
 		}
-		reply := handle(t, orchestrator, model, update, 101, request, name, args)
+		reply := handle(t, orchestrator, model, update, 101, "synthetic", name, args)
 		ids := listingIDs(t, reply)
 		if len(ids) < 1 || botresponse.Length(reply) > botresponse.MessageLimit {
 			t.Fatal("pagination stalled or message too long")
