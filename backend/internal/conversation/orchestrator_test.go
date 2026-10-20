@@ -65,11 +65,16 @@ func (store *memoryStore) Execute(ctx context.Context, id, owner int64, execute 
 type memoryRepository struct {
 	expense.Repository
 	expense.OwnerRepository
-	items    map[int64]expense.Expense
-	sequence int64
+	items         map[int64]expense.Expense
+	sequence      int64
+	listCalls     int
+	totalCalls    int
+	expenseReads  int
+	expenseWrites int
 }
 
 func (repo *memoryRepository) Create(_ context.Context, item expense.Expense) (expense.Expense, error) {
+	repo.expenseWrites++
 	repo.sequence++
 	item.ID = repo.sequence
 	item.CreatedAt = time.Unix(repo.sequence, 0)
@@ -79,6 +84,7 @@ func (repo *memoryRepository) Create(_ context.Context, item expense.Expense) (e
 }
 
 func (repo *memoryRepository) GetOwned(_ context.Context, owner, id int64) (expense.Expense, error) {
+	repo.expenseReads++
 	item, found := repo.items[id]
 	if !found || item.UserID != owner {
 		return expense.Expense{}, expense.ErrNotFound
@@ -87,6 +93,7 @@ func (repo *memoryRepository) GetOwned(_ context.Context, owner, id int64) (expe
 }
 
 func (repo *memoryRepository) LatestOwned(ctx context.Context, owner int64) (expense.Expense, error) {
+	repo.expenseReads++
 	for id := repo.sequence; id > 0; id-- {
 		item, err := repo.GetOwned(ctx, owner, id)
 		if err == nil {
@@ -97,6 +104,8 @@ func (repo *memoryRepository) LatestOwned(ctx context.Context, owner int64) (exp
 }
 
 func (repo *memoryRepository) ListOwned(_ context.Context, owner int64, filter expense.OwnerFilter, limit, offset int) (expense.Page, error) {
+	repo.listCalls++
+	repo.expenseReads++
 	items := []expense.Expense{}
 	for _, item := range repo.items {
 		if item.UserID != owner || (filter.Category != "" && item.Category != filter.Category) || (filter.DateFrom != "" && item.SpentAt < filter.DateFrom) || (filter.DateTo != "" && item.SpentAt > filter.DateTo) {
@@ -125,6 +134,8 @@ func (repo *memoryRepository) ListOwned(_ context.Context, owner int64, filter e
 }
 
 func (repo *memoryRepository) TotalOwned(ctx context.Context, owner int64, filter expense.OwnerFilter) (string, error) {
+	repo.totalCalls++
+	repo.expenseReads++
 	page, err := repo.ListOwned(ctx, owner, filter, 100, 0)
 	var total expense.Amount
 	for _, item := range page.Items {
@@ -134,6 +145,7 @@ func (repo *memoryRepository) TotalOwned(ctx context.Context, owner int64, filte
 }
 
 func (repo *memoryRepository) UpdateOwned(ctx context.Context, owner, id int64, version time.Time, changes expense.Changes) (expense.Expense, error) {
+	repo.expenseWrites++
 	item, err := repo.GetOwned(ctx, owner, id)
 	if err != nil || !item.UpdatedAt.Equal(version) {
 		return expense.Expense{}, expense.ErrNotFound
@@ -156,6 +168,7 @@ func (repo *memoryRepository) UpdateOwned(ctx context.Context, owner, id int64, 
 }
 
 func (repo *memoryRepository) DeleteOwned(ctx context.Context, owner, id int64, version time.Time) error {
+	repo.expenseWrites++
 	item, err := repo.GetOwned(ctx, owner, id)
 	if err != nil || !item.UpdatedAt.Equal(version) {
 		return expense.ErrNotFound

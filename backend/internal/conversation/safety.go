@@ -80,11 +80,23 @@ func messageAction(text string) string {
 	if contains([]string{"удали", "удалить", "убери", "убрать", "сотри", "delete", "remove"}, first) {
 		return "delete_expense"
 	}
-	if contains([]string{"измени", "изменить", "поменяй", "исправь", "скорректируй", "обнови", "очисти", "комментарий", "категория", "сумма", "дата", "последнее", "update", "edit", "change"}, first) {
+	if contains([]string{
+		"измени", "изменить", "поменяй", "исправь", "скорректируй", "обнови", "очисти",
+		"комментарий", "категория", "сумма", "дата",
+		"последний", "последняя", "последнее", "последнюю", "последней",
+		"выбранный", "выбранная", "выбранное", "update", "edit", "change",
+	}, first) {
 		return "update_expense"
 	}
+
+	for _, word := range words {
+		if contains([]string{"был", "была", "было"}, word) {
+			return "update_expense"
+		}
+	}
+
 	lower := strings.ToLower(text)
-	if strings.Contains(lower, "было") || strings.Contains(lower, "не ") && strings.Contains(lower, ", а ") {
+	if strings.Contains(lower, "не ") && strings.Contains(lower, ", а ") {
 		return "update_expense"
 	}
 	return ""

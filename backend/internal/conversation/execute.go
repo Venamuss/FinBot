@@ -21,6 +21,13 @@ func (orchestrator *Orchestrator) execute(ctx context.Context, repo Repositories
 	if operation.name == "confirm_delete" {
 		return orchestrator.confirmDelete(ctx, service, owner, text, next)
 	}
+	if operation.name == "unknown_intent" {
+		return unclearIntent(next.pending), nil
+	}
+	if !readActionSupported(operation, text, *next) || !pendingReplySupported(operation, text, *next) {
+		observability.Logger(ctx, "conversation", "validate_action").WarnContext(ctx, "Conversation action rejected", "tool", operation.name, "validation_category", "intent_evidence")
+		return unclearIntent(next.pending), nil
+	}
 
 	if !actionMatchesMessage(operation, text, *next) {
 		observability.Logger(ctx, "conversation", "validate_action").WarnContext(ctx, "Conversation action rejected", "tool", operation.name, "validation_category", "intent_conflict")

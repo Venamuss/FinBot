@@ -260,6 +260,8 @@ func TestConversationOwnershipAndStalePanelIntegration(t *testing.T) {
 					"delete_expense": "удали такси",
 					"update_expense": "измени #3 на 1",
 					"choose_expense": "2",
+					"total_expenses": "сколько потратил за месяц",
+					"list_expenses":  "покажи мои расходы",
 				}
 				response, err := orchestrator.Handle(ctx, id, owner, texts[name], time.Date(2026, 10, 17, 12, 0, 0, 0, time.UTC))
 				if err != nil {

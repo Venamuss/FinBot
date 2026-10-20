@@ -1274,3 +1274,104 @@ defect remains. Existing bounded language validation, in-memory conversation
 context and retryable delivery limitations remain documented. Ready for the
 owner's final diff review, intentional staging/commit/push and CI verification;
 no further features or refactoring are part of this stage.
+
+## Unclear Intent and Natural Expense Corrections — 20.10.2026
+
+Requested replacement for reverted commit `e5c54c6`, on top of revert
+`03b7d4c`. No new MVP features, dependencies, additional LLM requests, REST,
+SQL, transaction or ownership changes. The initial working tree still contained
+uncommitted copies of the reverted change; inspected them rather than assuming
+that the checkout matched HEAD. Left the existing unrelated comment edit in
+`telegram/client.go` outside this change and commit. Did not read or stage `.env`.
+
+Confirmed investigation results:
+
+- Traced Telegram private-message validation/allowlist, duplicate-response lookup,
+  state expiry/focus/pending controls, prompt/state-dependent tool schemas,
+  adapter protocol parsing, action parsing, intent checks, creation/read/update
+  dispatch, selection/version checks and PostgreSQL commit/replay boundaries.
+- The original read bug is reproducible on a clean archive of reverted HEAD:
+  a valid model-selected `list_expenses` for `ыфваываы` actually reads expenses.
+  The prompt requires a tool call without a dedicated no-action outcome;
+  protocol validation does not validate intent, and unknown text passes the
+  existing read dispatch guard. The provider's reason for choosing that tool is
+  not established by scripted tests.
+- The correction rejection is also reproducible on clean reverted HEAD and the
+  initially present implementation: `messageAction` recognizes `последнее` and
+  `было`, but not `последний был`, `последняя ... была` or `последний расход ...`.
+  It rejects a correct `update_expense` before target resolution. This validator
+  predates `e5c54c6` (introduced in `2dd75b5`); the reverted commit did not change
+  it and its tests missed these forms. Without the original provider response,
+  it is not established that e5 alone introduced the observed live regression.
+
+Implementation and regression coverage:
+
+- `conversation/prompt.go`, `tools.go`, `execute.go`: explicitly expose
+  `unknown_intent`, with exact idle response «Не понял запрос. Попробуйте
+  переформулировать.»; pending questions are retained and repeated. The required
+  single structured call now includes a no-action choice. Prompt examples cover
+  amount-first creation, gender variants of last-expense corrections and
+  description-based previous/new amount corrections.
+- New `conversation/intent.go`: replace the reverted general read-vocabulary
+  gate with a narrow defense against punctuation/opaque standalone tokens
+  authorizing reads, including wrong list/total/navigation proposals. Full
+  natural-language sentences are not required to match a keyword vocabulary.
+  A category alone may refine an existing listing only when source-backed.
+  Pending amount/category/date replies are checked before draft merging; these
+  checks do not gate independent amount corrections or expense descriptions.
+- `conversation/safety.go`: recognize singular last/selected-reference forms and
+  standalone `был`/`была`/`было` consistently. Actual monetary source validation,
+  previous-amount comparison, field restrictions, focus/latest rules, owner
+  scoping and optimistic versions continue to govern the write.
+- New `correction_intent_test.go`: all requested correction phrases, an informal
+  typo, selected-versus-latest focus, no focus/no records, stale/deleted/reassigned
+  focus, ambiguous descriptions with numeric selection, unrelated pending work,
+  and valid date/category field replies (including ISO dates).
+- New `intent_test.go` and adapter regressions: Cyrillic/Latin noise including
+  `лвлала`, punctuation/mixed tokens, valid but inappropriate model tools, unknown
+  outcomes in every state, valid reads/creations/typos/unfamiliar descriptions,
+  pending operations, pagination/focus, cancellation and deletion confirmation.
+  Test repository counters prove rejected inputs do not call any expense read
+  or write method. Normal response persistence/idempotency lookup still occur.
+- New `telegram/intent_regression_test.go`: actual Telegram processing, scripted
+  OpenAI-compatible HTTP responses and PostgreSQL validate the reported workflow,
+  repeated corrections, unknown input, selected focus, controls, denial and
+  duplicate updates. Existing listing/formatting/SQL test fixtures now contain
+  meaningful read messages rather than empty/synthetic text; their original
+  assertions remain. Existing suites cover pagination, A/B/C access, atomic
+  rollback, uncertain commits and stale/owner/version guards.
+
+Required validation results are recorded below after the final run. Baseline
+failures are expected reproductions, not passed checks. No live Telegram or
+provider calls were used to infer model interpretation quality.
+
+| Required check | Result |
+|---|---|
+| Clean reverted-HEAD baseline | Both bugs reproduced; corrections fail even for correct scripted update calls, and an incorrect list call actually reads expenses |
+| Relevant conversation/Telegram regressions | Passed with a real disposable PostgreSQL 17 instance |
+| `go vet ./...` | Passed |
+| `TEST_DATABASE_URL=… go test ./... -count=1 -timeout=180s` | Passed all packages, including PostgreSQL and Telegram integration suites |
+| `TEST_DATABASE_URL=… go test -race ./... -count=1 -timeout=180s` | Passed all packages |
+| `npm test` | Passed, 55 tests in four files |
+| `npm run build` | Passed TypeScript checks and production build |
+| `docker build --network host -t finbot-intent-rework-app:check .` | Passed with final application code |
+| Disposable Compose `config --quiet` and `up -d --no-build --wait --wait-timeout 90` | Passed; all three services healthy |
+| `python3 scripts/smoke.py --url http://127.0.0.1:18765` | Passed CRUD, member names/ownership, partial updates/reassignment, filters, sorting, pagination and errors |
+| `gofmt`, final diff/style review and `git diff --check` | Passed |
+
+Go used `finbot-intent-rework-db` on loopback port 18766 and random per-test
+schemas. Smoke used project `finbot-intent-rework`, its own PostgreSQL volume,
+loopback port 18765, synthetic credentials, empty bot token/allowlist/model key
+and an unreachable LLM URL. The unchanged previously built frontend image was
+reused. Removed only this task's disposable containers, network and volumes.
+Logs are `/tmp/finbot-rework-*.log`; no debugging artifacts are in the repository.
+
+Optional/unexecuted: live Telegram/provider/local-model tests, a fresh frontend
+image build, remote CI and repeated restart/persistence smoke. Scripted tests
+prove dispatch/storage behavior, not the quality of a particular provider's
+semantic interpretation. The Go defense deliberately covers opaque standalone
+input, punctuation, explicit action conflicts and expected field values; it is
+not a general gibberish detector. Multiword unknown intent still depends on the
+single configured LLM returning `unknown_intent`; unusual short field synonyms
+may need clarification. No universal Russian parser or general expense-word
+allowlist was added, and unfamiliar descriptions remain valid creation data.
