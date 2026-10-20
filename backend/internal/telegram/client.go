@@ -224,7 +224,7 @@ func (client *Client) request(ctx context.Context, method string, body []byte, o
 }
 
 // Telegram supplies retry_after in seconds. Also accept the standard header;
-// neither untrusted value may overflow a duration or reduce the normal backoff.
+// neither untrusted value may overflow a duration nor reduce the normal backoff.
 func responseRetryAfter(header string, seconds int64) time.Duration {
 	var delay time.Duration
 	if seconds > 0 && seconds <= int64((1<<63-1)/time.Second) {

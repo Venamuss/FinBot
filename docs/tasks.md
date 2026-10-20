@@ -1274,3 +1274,76 @@ defect remains. Existing bounded language validation, in-memory conversation
 context and retryable delivery limitations remain documented. Ready for the
 owner's final diff review, intentional staging/commit/push and CI verification;
 no further features or refactoring are part of this stage.
+
+## Unknown Telegram Intent — 20.10.2026
+
+Requested bug fix, with no new MVP features, dependencies, provider calls, API,
+SQL, ownership or transaction changes. Inspected the prompt, tool schemas,
+OpenAI-compatible response parser, per-owner state machine, control routing,
+draft merging and expense execution before implementation.
+
+The orchestrator required one tool call but offered no dedicated unknown-intent
+outcome. Protocol/argument validation did not establish intent, and
+`actionMatchesMessage` allowed list/total tools for arbitrary input. A fake model
+returning a valid `list_expenses` call for `ыфваываы` reproduced an actual expense
+query and response before the fix (baseline failure, not a passed check).
+
+Changes:
+
+- `conversation/prompt.go` and `tools.go`: expose `unknown_intent` in every state.
+  Retain one structured tool call, now including an explicit no-action outcome;
+  the model is never required to choose an expense operation.
+- New `conversation/intent.go` and dispatch in `execute.go`: return a fixed polite
+  Russian fallback; append the pending question when applicable. Reads require
+  source cues, navigation requires direction cues, and pending amount/category/
+  date values require source evidence before merging or clearing a draft.
+  Unknown/rejected replies retain focus, listing position, pending action and its
+  fixed expiration. Existing Go confirmation/cancellation and monetary checks
+  remain in effect. No global vocabulary/character filter limits descriptions.
+- New `conversation/intent_test.go`: regressions for Cyrillic/Latin noise,
+  punctuation/mixed input, hallucinated read/mutation tools, valid reads, common
+  typos, arbitrary descriptions, numeric replies, all pending state types,
+  preservation of pagination/focus, cancellation and deletion confirmation.
+  Includes creation from an earlier amount that must not complete after a
+  meaningless date reply.
+- Existing conversation test helpers count repository list/total calls. Adapter
+  tests cover both an incorrect real-wire `list_expenses` proposal and explicit
+  `unknown_intent`, including durable replay without another model call. Listing,
+  formatting and PostgreSQL ownership tests now supply actual read requests in
+  place of empty or synthetic messages, retaining their original assertions.
+- The pre-existing edit in `telegram/client.go` was left untouched. No commit.
+
+Required verification completed:
+
+| Check | Result |
+|---|---|
+| Regression baseline | Failed as expected: valid model-selected list/total calls actually read expenses for noise |
+| `go vet ./...` | Passed from `backend/` |
+| `TEST_DATABASE_URL=… go test -race ./... -count=1 -timeout=180s` | Passed all packages with real PostgreSQL 17; includes allowed A/B, denied C, empty allowlist, ownership, confirmations and idempotency |
+| `npm test` | Passed, 55 tests in four files |
+| `npm run build` | Passed, includes TypeScript checking |
+| `docker build --network host -t finbot-intent-app:check .` | Passed with final application code |
+| Isolated Compose `config --quiet` and `up -d --no-build --wait --wait-timeout 90` | Passed, three services healthy; reused unchanged `finbot-submission-frontend:20261018` |
+| `python3 scripts/smoke.py --url http://127.0.0.1:18765` | Passed CRUD, members/ownership, partial updates/reassignment, filters, sorting, pagination and errors |
+| `gofmt` and final `git diff --check` | Passed; reviewed changed functions, architectural boundaries, error handling and state preservation |
+
+Go integration checks used disposable container `finbot-intent-test-db`,
+loopback port 18766 and random per-test schemas. Compose used separate project
+`finbot-intent-check`, volume `finbot-intent-check_postgres_data`, loopback port
+18765, synthetic credentials, empty Telegram token/allowlist/model key and an
+unreachable LLM URL. Only this task's disposable containers/network/volumes were
+removed after verification. Logs: `/tmp/finbot-intent-*.log`.
+
+Intermediate full-suite failures exposed old read fixtures without user text and
+an invalid comma-delimited price in a new test fixture. Corrected the fixtures
+and reran the full suite successfully. Initial sandbox restrictions on local
+HTTP listeners/Go cache were resolved by running checks with approved access.
+
+Optional/unexecuted: live Telegram/provider/local-LLM calls, fresh frontend image
+build, remote CI and repeated restart/persistence smoke. No extra LLM call was
+introduced. Deterministic checks recognize bounded action/field cues, not full
+semantics: unfamiliar read phrasing may require rephrasing, and text containing
+recognized cues still needs the model's interpretation. An unfamiliar word can
+remain an expense description and receive an amount clarification; it is not
+rejected merely for being unfamiliar. This change does not claim perfect intent
+recognition.
